@@ -20,6 +20,7 @@ const ACTION_COLORS: Record<string, string> = {
   STATUS_UPDATE: 'text-blue-600 bg-blue-50 dark:bg-blue-950',
   EVALUATION_SUBMIT: 'text-green-600 bg-green-50 dark:bg-green-950',
   APPOINTMENT_DELETE: 'text-red-600 bg-red-50 dark:bg-red-950',
+  ADMIN_DELETE: 'text-red-600 bg-red-50 dark:bg-red-950',
 }
 
 export default function AuditLogsPage() {

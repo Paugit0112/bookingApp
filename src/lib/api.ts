@@ -104,6 +104,9 @@ export const api = {
       const qs = search ? `?search=${encodeURIComponent(search)}` : ''
       return request<StudentRow[]>('GET', `/students${qs}`, undefined, true)
     },
+    async update(id: string, payload: { full_name: string; student_id: string; section: string }) {
+      return request<StudentRow>('PATCH', `/students/${id}`, payload, true)
+    },
   },
 
   // ─── Evaluations ─────────────────────────────────────────────────────────────

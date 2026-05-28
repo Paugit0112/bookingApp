@@ -1,12 +1,17 @@
 import { useState } from 'react'
-import { useQuery } from '@tanstack/react-query'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { motion } from 'framer-motion'
-import { Search, Users } from 'lucide-react'
+import { Search, Users, Pencil } from 'lucide-react'
+import { toast } from 'sonner'
 import { Card, CardContent } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
+import { Label } from '@/components/ui/label'
+import { Button } from '@/components/ui/button'
 import { Skeleton } from '@/components/ui/skeleton'
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog'
 import { AdminNavbar } from '@/components/shared/Adminnavbar'
 import { api } from '@/lib/api'
+import type { StudentRow } from '@/lib/api'
 import { formatDate, getInitials } from '@/lib/utils'
 
 function useStudents(search: string) {
@@ -18,8 +23,46 @@ function useStudents(search: string) {
 }
 
 export default function StudentsPage() {
+  const queryClient = useQueryClient()
   const [search, setSearch] = useState('')
+  const [editing, setEditing] = useState<StudentRow | null>(null)
+  const [form, setForm] = useState({ full_name: '', student_id: '', section: '' })
+  const [isSaving, setIsSaving] = useState(false)
+
   const { data: students, isLoading } = useStudents(search)
+
+  const openEdit = (student: StudentRow) => {
+    setEditing(student)
+    setForm({ full_name: student.full_name, student_id: student.student_id, section: student.section })
+  }
+
+  const closeEdit = () => {
+    if (isSaving) return
+    setEditing(null)
+  }
+
+  const handleSave = async () => {
+    if (!editing) return
+    if (!form.full_name.trim() || !form.student_id.trim() || !form.section.trim()) {
+      toast.error('All fields are required.')
+      return
+    }
+    setIsSaving(true)
+    try {
+      await api.students.update(editing.id, {
+        full_name: form.full_name.trim(),
+        student_id: form.student_id.trim(),
+        section: form.section.trim(),
+      })
+      queryClient.invalidateQueries({ queryKey: ['students'] })
+      toast.success('Student record updated.')
+      setEditing(null)
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Update failed.')
+    } finally {
+      setIsSaving(false)
+    }
+  }
 
   return (
     <div className="flex flex-col flex-1 min-h-0">
@@ -62,30 +105,36 @@ export default function StudentsPage() {
             </Card>
           )}
           {!isLoading && students?.map((student) => (
-                <motion.div
-                  key={student.id}
-                  initial={{ opacity: 0, y: 6 }}
-                  animate={{ opacity: 1, y: 0 }}
-                >
-                  <Card>
-                    <CardContent className="p-4">
-                      <div className="flex items-center gap-3">
-                        <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-primary/10 text-primary text-sm font-semibold">
-                          {getInitials(student.full_name)}
-                        </div>
-                        <div className="flex-1 min-w-0">
-                          <p className="font-medium text-sm truncate">{student.full_name}</p>
-                          <p className="text-xs text-muted-foreground">
-                            {student.student_id} · {student.section}
-                          </p>
-                        </div>
-                        <p className="text-xs text-muted-foreground shrink-0">
-                          {formatDate(student.created_at)}
-                        </p>
-                      </div>
-                    </CardContent>
-                  </Card>
-                </motion.div>
+            <motion.div
+              key={student.id}
+              initial={{ opacity: 0, y: 6 }}
+              animate={{ opacity: 1, y: 0 }}
+            >
+              <Card>
+                <CardContent className="p-4">
+                  <div className="flex items-center gap-3">
+                    <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-primary/10 text-primary text-sm font-semibold">
+                      {getInitials(student.full_name)}
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <p className="font-medium text-sm truncate">{student.full_name}</p>
+                      <p className="text-xs text-muted-foreground">
+                        {student.student_id} · {student.section}
+                      </p>
+                    </div>
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="h-8 w-8 shrink-0"
+                      onClick={() => openEdit(student)}
+                      aria-label="Edit student"
+                    >
+                      <Pencil className="h-3.5 w-3.5" />
+                    </Button>
+                  </div>
+                </CardContent>
+              </Card>
+            </motion.div>
           ))}
         </div>
 
@@ -100,13 +149,14 @@ export default function StudentsPage() {
                     <th className="text-left p-3 font-medium text-muted-foreground">Student ID</th>
                     <th className="text-left p-3 font-medium text-muted-foreground">Section</th>
                     <th className="text-left p-3 font-medium text-muted-foreground">Registered</th>
+                    <th className="p-3" />
                   </tr>
                 </thead>
                 <tbody>
                   {isLoading
                     ? Array.from({ length: 8 }).map((_, i) => (
                         <tr key={`skel-d-${i}`} className="border-b">
-                          {['a','b','c','d'].map((k) => (
+                          {['a','b','c','d','e'].map((k) => (
                             <td key={k} className="p-3"><Skeleton className="h-4 w-full" /></td>
                           ))}
                         </tr>
@@ -114,7 +164,7 @@ export default function StudentsPage() {
                     : students?.length === 0
                     ? (
                       <tr>
-                        <td colSpan={4} className="py-12 text-center text-muted-foreground">
+                        <td colSpan={5} className="py-12 text-center text-muted-foreground">
                           <div className="flex flex-col items-center gap-2">
                             <Users className="h-10 w-10 opacity-30" />
                             <p>No students found</p>
@@ -140,6 +190,17 @@ export default function StudentsPage() {
                           <td className="p-3 font-mono text-muted-foreground">{student.student_id}</td>
                           <td className="p-3">{student.section}</td>
                           <td className="p-3 text-muted-foreground">{formatDate(student.created_at)}</td>
+                          <td className="p-3 text-right">
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              className="h-8 w-8"
+                              onClick={() => openEdit(student)}
+                              aria-label="Edit student"
+                            >
+                              <Pencil className="h-3.5 w-3.5" />
+                            </Button>
+                          </td>
                         </motion.tr>
                       ))}
                 </tbody>
@@ -148,6 +209,56 @@ export default function StudentsPage() {
           </CardContent>
         </Card>
       </div>
+
+      {/* ── Edit Dialog ── */}
+      <Dialog open={!!editing} onOpenChange={open => { if (!open) closeEdit() }}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Edit Student Record</DialogTitle>
+          </DialogHeader>
+
+          <div className="space-y-4 py-2">
+            <div className="space-y-1.5">
+              <Label htmlFor="edit-name">Full Name</Label>
+              <Input
+                id="edit-name"
+                value={form.full_name}
+                onChange={e => setForm(f => ({ ...f, full_name: e.target.value }))}
+                disabled={isSaving}
+              />
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="edit-sid">Student ID</Label>
+              <Input
+                id="edit-sid"
+                value={form.student_id}
+                onChange={e => setForm(f => ({ ...f, student_id: e.target.value.toUpperCase() }))}
+                className="uppercase font-mono"
+                disabled={isSaving}
+              />
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="edit-section">Section</Label>
+              <Input
+                id="edit-section"
+                value={form.section}
+                onChange={e => setForm(f => ({ ...f, section: e.target.value.toUpperCase() }))}
+                className="uppercase"
+                disabled={isSaving}
+              />
+            </div>
+          </div>
+
+          <DialogFooter>
+            <Button variant="outline" onClick={closeEdit} disabled={isSaving}>
+              Cancel
+            </Button>
+            <Button onClick={handleSave} disabled={isSaving}>
+              {isSaving ? 'Saving…' : 'Save Changes'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }

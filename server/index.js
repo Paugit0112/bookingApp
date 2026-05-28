@@ -171,7 +171,7 @@ app.patch('/api/appointments/:id/withdraw', async (req, res) => {
     : String(appt.appointment_date).slice(0, 10).split('-').map(Number)
   const [h, m] = String(appt.appointment_time).slice(0, 5).split(':').map(Number)
   const scheduledAt = new Date(y, mo - 1, d, h, m)
-  const deadline = new Date(scheduledAt.getTime() - 2 * 60 * 60 * 1000)
+  const deadline = new Date(scheduledAt.getTime() - 3 * 60 * 60 * 1000)
 
   if (new Date() >= deadline)
     return res.status(409).json({ error: 'WITHDRAWAL_DEADLINE: Cannot withdraw within 3 hours of your scheduled time' })
@@ -434,6 +434,47 @@ app.patch('/api/appointments/:id/reschedule', async (req, res) => {
   await db.query('UPDATE appointments SET appointment_date=?, appointment_time=? WHERE id=?',
     [appointment_date, appointment_time, id])
   res.json({ success: true })
+})
+
+// ─── PATCH /api/students/:id ─────────────────────────────────────────────────
+app.patch('/api/students/:id', requireAuth, async (req, res) => {
+  const { id } = req.params
+  const { full_name, student_id, section } = req.body
+  if (!full_name?.trim() || !student_id?.trim() || !section?.trim())
+    return res.status(400).json({ error: 'full_name, student_id and section are required' })
+
+  const conn = await db.getConnection()
+  try {
+    await conn.beginTransaction()
+    const [existing] = await conn.query('SELECT id FROM students WHERE id = ?', [id])
+    if (!existing[0]) {
+      await conn.rollback()
+      return res.status(404).json({ error: 'Student not found' })
+    }
+    const sid = student_id.toUpperCase().trim()
+    const [dup] = await conn.query('SELECT id FROM students WHERE student_id = ? AND id != ?', [sid, id])
+    if (dup[0]) {
+      await conn.rollback()
+      return res.status(409).json({ error: 'Student ID is already in use by another record.' })
+    }
+    await conn.query(
+      'UPDATE students SET full_name=?, student_id=?, section=? WHERE id=?',
+      [full_name.trim(), sid, section.trim(), id]
+    )
+    await conn.query(
+      'INSERT INTO audit_logs (id,admin_id,action,target_type,target_id,metadata) VALUES (?,?,?,?,?,?)',
+      [randomUUID(), req.admin.id, 'STUDENT_UPDATE', 'student', id,
+       JSON.stringify({ full_name: full_name.trim(), student_id: sid, section: section.trim() })]
+    )
+    await conn.commit()
+    const [[updated]] = await conn.query('SELECT * FROM students WHERE id=?', [id])
+    res.json(updated)
+  } catch (err) {
+    await conn.rollback()
+    res.status(500).json({ error: err.message })
+  } finally {
+    conn.release()
+  }
 })
 
 // ─── GET /api/audit-logs ──────────────────────────────────────────────────────

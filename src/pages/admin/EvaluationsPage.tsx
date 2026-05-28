@@ -9,7 +9,8 @@ import { Skeleton } from '@/components/ui/skeleton'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { AdminNavbar } from '@/components/shared/Adminnavbar'
 import { useAllEvaluations } from '@/hooks/useEvaluations'
-import { cn, formatDate, formatTime, getScoreGrade, EXAM_DATES } from '@/lib/utils'
+import { cn, formatDate, formatTime, getScoreGrade } from '@/lib/utils'
+import { useExamDates } from '@/hooks/useExamDates'
 import { RECOMMENDATION_LABELS, RECOMMENDATION_COLORS } from '@/types'
 import type { Recommendation } from '@/types'
 import { generateEvaluationReportPDF } from '@/lib/pdf'
@@ -33,6 +34,7 @@ function inScoreRange(score: number, range: string): boolean {
 }
 
 export default function EvaluationsPage() {
+  const { data: examDates = [] } = useExamDates()
   const [search,      setSearch]      = useState('')
   const [recFilter,   setRecFilter]   = useState('all')
   const [scoreRange,  setScoreRange]  = useState('all')
@@ -129,7 +131,7 @@ export default function EvaluationsPage() {
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="all">All Dates</SelectItem>
-                  {EXAM_DATES.map(d => (
+                  {examDates.map(d => (
                     <SelectItem key={d} value={d}>{formatDate(d)}</SelectItem>
                   ))}
                 </SelectContent>

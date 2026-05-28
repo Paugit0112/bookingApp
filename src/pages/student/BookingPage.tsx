@@ -127,7 +127,7 @@ export default function BookingPage() {
             <div className="flex flex-wrap justify-center gap-2">
               <span className="inline-flex items-center gap-1.5 rounded-full bg-primary/10 px-3 py-1 text-xs font-medium text-primary">
                 <CalendarDays className="h-3 w-3" />
-                First-come, first-served · 24 slots/day
+                First-come, first-served · 26 slots/day
               </span>
               <span className="inline-flex items-center gap-1.5 rounded-full bg-primary/10 px-3 py-1 text-xs font-medium text-primary">
                 <MapPin className="h-3 w-3" />

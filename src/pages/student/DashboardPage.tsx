@@ -529,6 +529,16 @@ function AppointmentSlip({
           </Button>
         </div>
       )}
+
+      {/* Post-withdrawal: offer to rebook */}
+      {appointment.status === 'cancelled' && (
+        <a href="/booking">
+          <Button className="w-full gap-2">
+            <BookOpen className="h-4 w-4" />
+            Book a New Appointment
+          </Button>
+        </a>
+      )}
     </div>
   )
 }

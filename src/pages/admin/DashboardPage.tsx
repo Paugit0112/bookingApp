@@ -18,7 +18,8 @@ import { StatusBadge } from '@/components/shared/StatusBadge'
 import { api } from '@/lib/api'
 import { useAppointments } from '@/hooks/useAppointments'
 import { useAllEvaluations } from '@/hooks/useEvaluations'
-import { EXAM_DATES, formatDate, formatTime, getScoreGrade, cn } from '@/lib/utils'
+import { useExamDates } from '@/hooks/useExamDates'
+import { formatDate, formatTime, getScoreGrade, cn } from '@/lib/utils'
 
 function useDayStats(date: string) {
   return useQuery({
@@ -37,6 +38,7 @@ const cardVariants = {
 
 export default function AdminDashboardPage() {
   const today = new Date().toISOString().slice(0, 10)
+  const { data: examDates = [] } = useExamDates()
   const { data: allAppointments, isLoading: apptLoading } = useAppointments()
   const { data: evaluations, isLoading: evalsLoading } = useAllEvaluations()
   const isLoading = apptLoading || evalsLoading
@@ -88,7 +90,7 @@ export default function AdminDashboardPage() {
   const handleRecentStatus = (v: string) => { setRecentStatus(v); setRecentPage(1) }
   const handleRecentDate   = (v: string) => { setRecentDate(v);   setRecentPage(1) }
 
-  const totalSlots = EXAM_DATES.length * 24
+  const totalSlots = examDates.length * 26
 
   const statCards = [
     {
@@ -188,10 +190,10 @@ export default function AdminDashboardPage() {
                 <CalendarDays className="h-4 w-4 text-primary" />
                 Exam Schedule
               </CardTitle>
-              <CardDescription>Slot fill rate per exam day (24 slots each)</CardDescription>
+              <CardDescription>Slot fill rate per exam day (26 slots each)</CardDescription>
             </CardHeader>
             <CardContent className="space-y-4">
-              {EXAM_DATES.map(date => (
+              {examDates.map(date => (
                 <ExamDayRow key={date} date={date} today={today} />
               ))}
             </CardContent>
@@ -244,7 +246,7 @@ export default function AdminDashboardPage() {
                   </SelectTrigger>
                   <SelectContent>
                     <SelectItem value="all">All Dates</SelectItem>
-                    {EXAM_DATES.map(d => (
+                    {examDates.map(d => (
                       <SelectItem key={d} value={d}>{formatDate(d)}</SelectItem>
                     ))}
                   </SelectContent>
@@ -406,7 +408,7 @@ function ExamDayRow({ date, today }: Readonly<{ date: string; today: string }>) 
   const approved  = Number(stats?.approved  ?? 0)
   const evaluated = Number(stats?.evaluated ?? 0)
   const confirmed = approved + evaluated
-  const pct = (confirmed / 24) * 100
+  const pct = (confirmed / 26) * 100
   const isPast  = date < today
   const isToday = date === today
 
@@ -420,7 +422,7 @@ function ExamDayRow({ date, today }: Readonly<{ date: string; today: string }>) 
         </div>
         {isLoading
           ? <Skeleton className="h-4 w-16" />
-          : <span className="text-xs text-muted-foreground tabular-nums">{confirmed}/24 booked</span>
+          : <span className="text-xs text-muted-foreground tabular-nums">{confirmed}/26 booked</span>
         }
       </div>
       {isLoading

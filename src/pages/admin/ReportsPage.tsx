@@ -6,9 +6,10 @@ import { Button } from '@/components/ui/button'
 import { Skeleton } from '@/components/ui/skeleton'
 import { AdminNavbar } from '@/components/shared/Adminnavbar'
 import { api } from '@/lib/api'
-import { EXAM_DATES, formatDate, getScoreGrade, cn } from '@/lib/utils'
+import { formatDate, getScoreGrade, cn } from '@/lib/utils'
 import { generateEvaluationReportPDF } from '@/lib/pdf'
 import { useAllEvaluations } from '@/hooks/useEvaluations'
+import { useExamDates } from '@/hooks/useExamDates'
 
 function useDayStats(date: string) {
   return useQuery({
@@ -40,7 +41,7 @@ function DayCard({ date }: { readonly date: string }) {
           {isLoading ? (
             <Skeleton className="h-4 w-12" />
           ) : (
-            <span className="text-xs font-normal text-muted-foreground">{total}/24 booked</span>
+            <span className="text-xs font-normal text-muted-foreground">{total}/26 booked</span>
           )}
         </CardTitle>
       </CardHeader>
@@ -52,7 +53,7 @@ function DayCard({ date }: { readonly date: string }) {
           </div>
         ) : (
           <>
-            <Progress value={(total / 24) * 100} className="h-2" />
+            <Progress value={(total / 26) * 100} className="h-2" />
             <div className="grid grid-cols-3 gap-2 text-center text-xs">
               <div className="rounded-md bg-yellow-50 dark:bg-yellow-950 py-1.5">
                 <p className="font-bold text-yellow-700 dark:text-yellow-300">{pending}</p>
@@ -92,6 +93,7 @@ function DayCard({ date }: { readonly date: string }) {
 }
 
 export default function ReportsPage() {
+  const { data: examDates = [] } = useExamDates()
   const { data: evaluations, isLoading: evalsLoading } = useAllEvaluations()
 
   const totalEvaluated = evaluations?.length ?? 0
@@ -110,14 +112,14 @@ export default function ReportsPage() {
           <Card>
             <CardContent className="pt-5 text-center space-y-1">
               <Users className="h-6 w-6 mx-auto text-primary" />
-              <p className="text-2xl font-bold">{EXAM_DATES.length}</p>
+              <p className="text-2xl font-bold">{examDates.length}</p>
               <p className="text-xs text-muted-foreground">Exam Days</p>
             </CardContent>
           </Card>
           <Card>
             <CardContent className="pt-5 text-center space-y-1">
               <CalendarDays className="h-6 w-6 mx-auto text-blue-500" />
-              <p className="text-2xl font-bold">{EXAM_DATES.length * 24}</p>
+              <p className="text-2xl font-bold">{examDates.length * 26}</p>
               <p className="text-xs text-muted-foreground">Total Slots</p>
             </CardContent>
           </Card>
@@ -143,7 +145,7 @@ export default function ReportsPage() {
             Per-Day Breakdown
           </h2>
           <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-4">
-            {EXAM_DATES.map((date) => (
+            {examDates.map((date) => (
               <DayCard key={date} date={date} />
             ))}
           </div>
