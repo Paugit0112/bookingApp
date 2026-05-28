@@ -17,6 +17,7 @@ const EvaluationsPage     = lazy(() => import('@/pages/admin/EvaluationsPage'))
 const StudentsPage        = lazy(() => import('@/pages/admin/StudentsPage'))
 const AuditLogsPage       = lazy(() => import('@/pages/admin/AuditLogsPage'))
 const ReportsPage         = lazy(() => import('@/pages/admin/ReportsPage'))
+const SettingsPage        = lazy(() => import('@/pages/admin/SettingsPage'))
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -65,6 +66,7 @@ export default function App() {
                 <Route path="students" element={<StudentsPage />} />
                 <Route path="audit-logs" element={<AuditLogsPage />} />
                 <Route path="reports" element={<ReportsPage />} />
+                <Route path="settings" element={<SettingsPage />} />
               </Route>
 
               {/* ── Catch-all ── */}

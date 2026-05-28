@@ -1,9 +1,9 @@
 import { useState } from 'react'
+import { useQueryClient } from '@tanstack/react-query'
 import { useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { motion } from 'framer-motion'
 import { CalendarDays, BookOpen, Moon, Sun, Info, MapPin, Clock } from 'lucide-react'
-import { format } from 'date-fns'
 import { toast } from 'sonner'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
@@ -15,17 +15,19 @@ import { SlotCounter } from '@/components/shared/SlotCounter'
 import { BookingConfirmationModal } from '@/components/student/BookingConfirmationModal'
 import { bookingSchema, type BookingSchema } from '@/schemas'
 import { useDailySlots } from '@/hooks/useSlots'
+import { useExamDates } from '@/hooks/useExamDates'
 import { api } from '@/lib/api'
-import { formatDate, formatTime, getAvailableTimeSlots, VENUE, EXAM_DATES } from '@/lib/utils'
+import { formatDate, formatTime, getAvailableTimeSlots, VENUE } from '@/lib/utils'
 import { useTheme } from '@/components/shared/ThemeProvider'
 import type { BookingConfirmation } from '@/types'
 
-const AVAILABLE_DATES = EXAM_DATES
 const TIME_SLOTS = getAvailableTimeSlots()
 
 export default function BookingPage() {
   const { resolvedTheme, setTheme } = useTheme()
-  const [selectedDate, setSelectedDate] = useState<string>(AVAILABLE_DATES[0])
+  const queryClient = useQueryClient()
+  const { data: availableDates = [] } = useExamDates()
+  const [selectedDate, setSelectedDate] = useState<string>('')
   const [confirmation, setConfirmation] = useState<BookingConfirmation | null>(null)
   const [isSubmitting, setIsSubmitting] = useState(false)
 
@@ -41,7 +43,7 @@ export default function BookingPage() {
   } = useForm<BookingSchema>({
     resolver: zodResolver(bookingSchema),
     defaultValues: {
-      appointment_date: AVAILABLE_DATES[0],
+      appointment_date: '',
       appointment_time: '',
     },
   })
@@ -51,6 +53,7 @@ export default function BookingPage() {
   const handleDateChange = (date: string) => {
     setSelectedDate(date)
     setValue('appointment_date', date)
+    setValue('appointment_time', '')
   }
 
   const onSubmit = async (data: BookingSchema) => {
@@ -62,9 +65,7 @@ export default function BookingPage() {
     setIsSubmitting(true)
     try {
       const result = await api.booking.create({
-        full_name: data.full_name.trim(),
         student_id: data.student_id.toUpperCase().trim(),
-        section: data.section.trim(),
         appointment_date: data.appointment_date,
         appointment_time: data.appointment_time,
       })
@@ -74,11 +75,14 @@ export default function BookingPage() {
         appointment: result.appointment as BookingConfirmation['appointment'],
       })
       reset()
+      queryClient.invalidateQueries({ queryKey: ['daily-slots'] })
       toast.success('Appointment booked successfully!')
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : 'Booking failed'
-      if (message.includes('DUPLICATE_BOOKING')) {
-        toast.error('You already have an active booking. Check your dashboard for details.')
+      if (message.includes('STUDENT_NOT_FOUND')) {
+        toast.error('Student ID not found. Please verify your ID number and try again.')
+      } else if (message.includes('DUPLICATE_BOOKING')) {
+        toast.error('You have already made a booking. Each student is allowed only one appointment across all exam dates.')
       } else if (message.includes('SLOT_FULL')) {
         toast.error('This date is now fully booked. Please choose another date.')
       } else {
@@ -148,22 +152,13 @@ export default function BookingPage() {
               Presentation Schedule
             </p>
             <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
-              {AVAILABLE_DATES.map((date) => (
-                <button
+              {availableDates.map((date) => (
+                <DateButton
                   key={date}
-                  type="button"
+                  date={date}
+                  selected={selectedDate === date}
                   onClick={() => handleDateChange(date)}
-                  className={`rounded-lg border px-3 py-2 text-xs font-medium text-left transition-colors ${
-                    selectedDate === date
-                      ? 'border-primary bg-primary/10 text-primary'
-                      : 'hover:border-primary/40 hover:bg-muted/50'
-                  }`}
-                >
-                  <span className="block text-[10px] text-muted-foreground">
-                    {new Date(date + 'T00:00:00').toLocaleDateString('en-US', { weekday: 'short' })}
-                  </span>
-                  {formatDate(date)}
-                </button>
+                />
               ))}
             </div>
           </div>
@@ -183,58 +178,23 @@ export default function BookingPage() {
                 Appointment Details
               </CardTitle>
               <CardDescription>
-                All fields are required. Your Student ID will be used to identify your booking.
+                Enter your Student ID and select a date and time. Your ID must be registered in the system.
               </CardDescription>
             </CardHeader>
             <CardContent>
               <form onSubmit={handleSubmit(onSubmit)} className="space-y-5">
-                {/* Full Name */}
-                <div className="space-y-1.5">
-                  <Label htmlFor="full_name">Full Name</Label>
-                  <Input
-                    id="full_name"
-                    placeholder="e.g., Juan Dela Cruz"
-                    {...register('full_name')}
-                    aria-invalid={!!errors.full_name}
-                  />
-                  {errors.full_name && (
-                    <p className="text-xs text-destructive">{errors.full_name.message}</p>
-                  )}
-                </div>
-
                 {/* Student ID */}
                 <div className="space-y-1.5">
                   <Label htmlFor="student_id">Student ID Number</Label>
                   <Input
                     id="student_id"
-                    placeholder="e.g., 2021-00123"
+                    placeholder="e.g., 231-00143"
                     {...register('student_id')}
                     className="uppercase"
                     aria-invalid={!!errors.student_id}
                   />
                   {errors.student_id && (
                     <p className="text-xs text-destructive">{errors.student_id.message}</p>
-                  )}
-                </div>
-
-                {/* Section */}
-                <div className="space-y-1.5">
-                  <Label>Section</Label>
-                  <Select
-                    value={watch('section')}
-                    onValueChange={(v) => setValue('section', v, { shouldValidate: true })}
-                  >
-                    <SelectTrigger aria-invalid={!!errors.section}>
-                      <SelectValue placeholder="Select your section" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {['AD1', 'BLM1', 'CM1', 'EN1'].map((s) => (
-                        <SelectItem key={s} value={s}>{s}</SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                  {errors.section && (
-                    <p className="text-xs text-destructive">{errors.section.message}</p>
                   )}
                 </div>
 
@@ -249,7 +209,7 @@ export default function BookingPage() {
                       <SelectValue placeholder="Select a date" />
                     </SelectTrigger>
                     <SelectContent>
-                      {AVAILABLE_DATES.map((date) => (
+                      {availableDates.map((date) => (
                         <SelectItem key={date} value={date}>
                           {formatDate(date)}
                         </SelectItem>
@@ -263,7 +223,19 @@ export default function BookingPage() {
 
                 {/* Time Selection */}
                 <div className="space-y-1.5">
-                  <Label>Appointment Time</Label>
+                  <div className="flex items-center justify-between">
+                    <Label>Appointment Time</Label>
+                    <div className="flex items-center gap-3 text-xs text-muted-foreground">
+                      <span className="flex items-center gap-1">
+                        <span className="h-2 w-2 rounded-full bg-green-500 inline-block" />
+                        <span>Available</span>
+                      </span>
+                      <span className="flex items-center gap-1">
+                        <span className="h-2 w-2 rounded-full bg-red-400 inline-block" />
+                        <span>Taken</span>
+                      </span>
+                    </div>
+                  </div>
                   <Select
                     value={selectedTime}
                     onValueChange={(v) => setValue('appointment_time', v, { shouldValidate: true })}
@@ -274,21 +246,54 @@ export default function BookingPage() {
                     <SelectContent>
                       <SelectGroup>
                         <SelectLabel>Morning (9:00 AM – 11:40 AM)</SelectLabel>
-                        {TIME_SLOTS.filter((t) => parseInt(t.split(':')[0]) < 12).map((t) => (
-                          <SelectItem key={t} value={t}>{formatTime(t)}</SelectItem>
-                        ))}
+                        {TIME_SLOTS.filter(t => Number.parseInt(t.split(':')[0]) < 12).map(t => {
+                          const taken = (slotInfo?.booked_times ?? []).includes(t)
+                          return (
+                            <SelectItem key={t} value={t} disabled={taken}>
+                              <div className="flex items-center gap-2 w-full">
+                                <span className={`h-1.5 w-1.5 rounded-full shrink-0 ${taken ? 'bg-red-400' : 'bg-green-500'}`} />
+                                <span className={taken ? 'line-through text-muted-foreground' : ''}>{formatTime(t)}</span>
+                                <span className={`ml-4 text-xs ${taken ? 'text-red-400' : 'text-green-500'}`}>
+                                  {taken ? 'Taken' : 'Available'}
+                                </span>
+                              </div>
+                            </SelectItem>
+                          )
+                        })}
                       </SelectGroup>
                       <SelectGroup>
-                        <SelectLabel>Afternoon (12:00 PM – 4:40 PM)</SelectLabel>
-                        {TIME_SLOTS.filter((t) => { const h = parseInt(t.split(':')[0]); return h >= 12 && h < 17 }).map((t) => (
-                          <SelectItem key={t} value={t}>{formatTime(t)}</SelectItem>
-                        ))}
+                        <SelectLabel>Afternoon (1:00 PM – 4:40 PM)</SelectLabel>
+                        {TIME_SLOTS.filter(t => { const h = Number.parseInt(t.split(':')[0]); return h >= 13 && h < 17 }).map(t => {
+                          const taken = (slotInfo?.booked_times ?? []).includes(t)
+                          return (
+                            <SelectItem key={t} value={t} disabled={taken}>
+                              <div className="flex items-center gap-2 w-full">
+                                <span className={`h-1.5 w-1.5 rounded-full shrink-0 ${taken ? 'bg-red-400' : 'bg-green-500'}`} />
+                                <span className={taken ? 'line-through text-muted-foreground' : ''}>{formatTime(t)}</span>
+                                <span className={`ml-4 text-xs ${taken ? 'text-red-400' : 'text-green-500'}`}>
+                                  {taken ? 'Taken' : 'Available'}
+                                </span>
+                              </div>
+                            </SelectItem>
+                          )
+                        })}
                       </SelectGroup>
                       <SelectGroup>
-                        <SelectLabel>Evening (5:00 PM – 6:40 PM)</SelectLabel>
-                        {TIME_SLOTS.filter((t) => parseInt(t.split(':')[0]) >= 17).map((t) => (
-                          <SelectItem key={t} value={t}>{formatTime(t)}</SelectItem>
-                        ))}
+                        <SelectLabel>Evening (5:00 PM – 6:20 PM)</SelectLabel>
+                        {TIME_SLOTS.filter(t => Number.parseInt(t.split(':')[0]) >= 17).map(t => {
+                          const taken = (slotInfo?.booked_times ?? []).includes(t)
+                          return (
+                            <SelectItem key={t} value={t} disabled={taken}>
+                              <div className="flex items-center gap-2 w-full">
+                                <span className={`h-1.5 w-1.5 rounded-full shrink-0 ${taken ? 'bg-red-400' : 'bg-green-500'}`} />
+                                <span className={taken ? 'line-through text-muted-foreground' : ''}>{formatTime(t)}</span>
+                                <span className={`ml-4 text-xs ${taken ? 'text-red-400' : 'text-green-500'}`}>
+                                  {taken ? 'Taken' : 'Available'}
+                                </span>
+                              </div>
+                            </SelectItem>
+                          )
+                        })}
                       </SelectGroup>
                     </SelectContent>
                   </Select>
@@ -301,8 +306,7 @@ export default function BookingPage() {
                 <div className="flex gap-2 rounded-lg bg-blue-50 dark:bg-blue-950 p-3 text-sm text-blue-700 dark:text-blue-300">
                   <Info className="h-4 w-4 mt-0.5 shrink-0" />
                   <span>
-                    Each Student ID can only have one active booking. Your appointment will be
-                    pending until approved by the evaluator.
+                    Each Student ID can only have one active booking at a time. You may cancel and rebook, subject to the withdrawal policy below.
                   </span>
                 </div>
 
@@ -325,11 +329,11 @@ export default function BookingPage() {
                   size="lg"
                   disabled={isSubmitting || slotInfo?.is_full}
                 >
-                  {isSubmitting
-                    ? 'Booking...'
-                    : slotInfo?.is_full
-                    ? 'No slots available'
-                    : 'Book Appointment'}
+                  {(() => {
+                    if (isSubmitting) return 'Booking...'
+                    if (slotInfo?.is_full) return 'No slots available'
+                    return 'Book Appointment'
+                  })()}
                 </Button>
               </form>
             </CardContent>
@@ -351,5 +355,38 @@ export default function BookingPage() {
         confirmation={confirmation}
       />
     </div>
+  )
+}
+
+// ─── DateButton ───────────────────────────────────────────────────────────────
+
+function DateButton({ date, selected, onClick }: Readonly<{ date: string; selected: boolean; onClick: () => void }>) {
+  const { data: slotInfo } = useDailySlots(date)
+  const isFull = slotInfo?.is_full ?? false
+  const weekday = new Date(date + 'T00:00:00').toLocaleDateString('en-US', { weekday: 'short' })
+
+  let slotLabel: React.ReactNode = null
+  if (isFull) {
+    slotLabel = <span className="block text-[10px] font-semibold text-red-500 mt-0.5">Fully Booked</span>
+  } else if (slotInfo) {
+    slotLabel = <span className="block text-[10px] text-green-600 dark:text-green-400 mt-0.5">{slotInfo.remaining} slots left</span>
+  }
+
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={[
+        'rounded-lg border px-3 py-2 text-xs font-medium text-left transition-colors',
+        selected && !isFull  ? 'border-primary bg-primary/10 text-primary' : '',
+        selected && isFull   ? 'border-red-300 bg-red-50 dark:bg-red-950/30 text-red-600 dark:text-red-400' : '',
+        !selected && isFull  ? 'border-red-200 bg-red-50/60 dark:border-red-900 dark:bg-red-950/20 opacity-70' : '',
+        !selected && !isFull ? 'hover:border-primary/40 hover:bg-muted/50' : '',
+      ].join(' ').trim()}
+    >
+      <span className="block text-[10px] text-muted-foreground">{weekday}</span>
+      <span className="block">{formatDate(date)}</span>
+      {slotLabel}
+    </button>
   )
 }

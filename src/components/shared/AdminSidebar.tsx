@@ -3,7 +3,7 @@ import { motion, AnimatePresence } from 'framer-motion'
 import {
   LayoutDashboard, CalendarDays, ClipboardCheck, Users,
   BarChart3, LogOut, ChevronLeft, ChevronRight,
-  ScrollText, X,
+  ScrollText, X, Settings,
 } from 'lucide-react'
 import { useState } from 'react'
 import { cn } from '@/lib/utils'
@@ -22,6 +22,7 @@ const NAV_ITEMS = [
   { to: '/admin/students', icon: Users, label: 'Students' },
   { to: '/admin/reports', icon: BarChart3, label: 'Reports' },
   { to: '/admin/audit-logs', icon: ScrollText, label: 'Audit Logs' },
+  { to: '/admin/settings', icon: Settings, label: 'Settings' },
 ]
 
 function SidebarContent({
@@ -43,26 +44,27 @@ function SidebarContent({
 
   return (
     <TooltipProvider delayDuration={0}>
-      <div className={cn('flex items-center gap-3 px-4 py-5', collapsed && 'justify-center px-0')}>
-        <img
-          src="/logo.png"
-          alt="CSU ITE14 Logo"
-          className="h-9 w-9 shrink-0 rounded-full object-cover"
-        />
-        <AnimatePresence>
-          {!collapsed && (
-            <motion.div
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              exit={{ opacity: 0 }}
-              transition={{ duration: 0.15 }}
-              className="min-w-0"
-            >
-              <p className="whitespace-nowrap text-sm font-bold leading-tight">EvalBook</p>
-              <p className="whitespace-nowrap text-xs text-muted-foreground">Admin Panel</p>
-            </motion.div>
-          )}
-        </AnimatePresence>
+      <div className="p-2 pt-3 pb-2">
+        <div className={cn('flex items-center gap-3 rounded-md px-3 py-2.5', collapsed && 'justify-center px-0')}>
+          <img
+            src="/logo.png"
+            alt="CSU ITE14 Logo"
+            className="h-6 w-6 shrink-0 rounded-full object-cover"
+          />
+          <AnimatePresence>
+            {!collapsed && (
+              <motion.div
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                exit={{ opacity: 0 }}
+                transition={{ duration: 0.15 }}
+              >
+                <p className="whitespace-nowrap text-sm font-bold leading-tight">EvalBook</p>
+                <p className="whitespace-nowrap text-xs text-muted-foreground leading-tight">Admin Panel</p>
+              </motion.div>
+            )}
+          </AnimatePresence>
+        </div>
       </div>
 
       <Separator />
@@ -167,10 +169,13 @@ export function AdminSidebar() {
             transition={{ type: 'spring', damping: 25, stiffness: 200 }}
             className="fixed left-0 top-0 z-50 flex h-full w-72 flex-col border-r bg-sidebar text-sidebar-foreground shadow-xl lg:hidden"
           >
-            <div className="flex items-center justify-between px-4 py-3 border-b">
-              <div className="flex items-center gap-2">
-                <img src="/logo.png" alt="CSU ITE14 Logo" className="h-8 w-8 rounded-full object-cover" />
-                <span className="text-sm font-bold">EvalBook</span>
+            <div className="flex items-center justify-between px-3 py-2.5 border-b">
+              <div className="flex items-center gap-3">
+                <img src="/logo.png" alt="CSU ITE14 Logo" className="h-6 w-6 rounded-full object-cover" />
+                <div>
+                  <p className="text-sm font-bold leading-tight">EvalBook</p>
+                  <p className="text-xs text-muted-foreground leading-tight">Admin Panel</p>
+                </div>
               </div>
               <Button variant="ghost" size="icon" onClick={closeMobile} className="h-8 w-8">
                 <X className="h-4 w-4" />

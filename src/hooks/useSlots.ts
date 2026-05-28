@@ -1,6 +1,5 @@
 import { useQuery } from '@tanstack/react-query'
 import { api } from '@/lib/api'
-import { format } from 'date-fns'
 
 export function useDailySlots(date: string) {
   return useQuery({
@@ -13,5 +12,5 @@ export function useDailySlots(date: string) {
 }
 
 export function useTodaySlots() {
-  return useDailySlots(format(new Date(), 'yyyy-MM-dd'))
+  return useDailySlots(new Date().toISOString().slice(0, 10))
 }

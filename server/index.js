@@ -9,7 +9,7 @@ const db      = require('./db')
 const app    = express()
 const PORT   = process.env.PORT || 3002
 const SECRET = process.env.JWT_SECRET || 'evalbook-local-secret-change-in-prod'
-const MAX_BOOKINGS = 24
+const MAX_BOOKINGS = 26
 
 app.disable('x-powered-by')
 app.use(cors({ origin: ['http://localhost:5173', 'http://localhost:5174'], credentials: true }))
@@ -55,18 +55,20 @@ app.get('/api/auth/me', requireAuth, async (req, res) => {
 // ─── GET /api/slots/:date ─────────────────────────────────────────────────────
 app.get('/api/slots/:date', async (req, res) => {
   const { date } = req.params
-  const [[{ booked }]] = await db.query(
-    `SELECT COUNT(*) AS booked FROM appointments
+  const [rows] = await db.query(
+    `SELECT appointment_time FROM appointments
      WHERE appointment_date = ? AND status NOT IN ('rejected','cancelled')`,
     [date]
   )
+  const booked_times = rows.map(r => String(r.appointment_time).slice(0, 5))
+  const booked = booked_times.length
   const remaining = Math.max(MAX_BOOKINGS - booked, 0)
-  res.json({ date, booked, remaining, is_full: booked >= MAX_BOOKINGS })
+  res.json({ date, booked, remaining, is_full: booked >= MAX_BOOKINGS, booked_times })
 })
 
 // ─── POST /api/book ───────────────────────────────────────────────────────────
 app.post('/api/book', async (req, res) => {
-  const { full_name, student_id, section, appointment_date, appointment_time } = req.body
+  const { student_id, appointment_date, appointment_time } = req.body
 
   const conn = await db.getConnection()
   try {
@@ -83,31 +85,23 @@ app.post('/api/book', async (req, res) => {
       return res.status(409).json({ error: 'SLOT_FULL: No remaining slots for this date' })
     }
 
-    // 2. Upsert student
+    // 2. Verify student exists — no self-registration allowed
     const sid = student_id.toUpperCase().trim()
-    const [existing] = await conn.query('SELECT * FROM students WHERE student_id = ?', [sid])
-    let student
-    if (existing[0]) {
-      await conn.query('UPDATE students SET full_name=?, section=? WHERE student_id=?', [full_name.trim(), section.trim(), sid])
-      student = { ...existing[0], full_name: full_name.trim(), section: section.trim() }
-    } else {
-      const newId = randomUUID()
-      await conn.query(
-        'INSERT INTO students (id,full_name,student_id,section) VALUES (?,?,?,?)',
-        [newId, full_name.trim(), sid, section.trim()]
-      )
-      const [[s]] = await conn.query('SELECT * FROM students WHERE id=?', [newId])
-      student = s
+    const [students] = await conn.query('SELECT * FROM students WHERE student_id = ?', [sid])
+    if (!students[0]) {
+      await conn.rollback()
+      return res.status(404).json({ error: 'STUDENT_NOT_FOUND: Student ID not found. Please verify your ID number.' })
     }
+    const student = students[0]
 
-    // 3. Check duplicate active booking
-    const [active] = await conn.query(
+    // 3. Prevent double-booking — cancelled appointments allow rebooking
+    const [prior] = await conn.query(
       `SELECT id FROM appointments WHERE student_id=? AND status NOT IN ('rejected','cancelled')`,
       [student.id]
     )
-    if (active[0]) {
+    if (prior[0]) {
       await conn.rollback()
-      return res.status(409).json({ error: 'DUPLICATE_BOOKING: Student already has an active appointment' })
+      return res.status(409).json({ error: 'DUPLICATE_BOOKING: You already have an active booking. Check your dashboard for details.' })
     }
 
     // 4. Insert appointment
@@ -137,13 +131,18 @@ app.get('/api/student/:studentId/appointment', async (req, res) => {
   const student = students[0]
 
   const [appts] = await db.query(
-    `SELECT * FROM appointments WHERE student_id=? AND status NOT IN ('rejected','cancelled') LIMIT 1`,
+    `SELECT * FROM appointments WHERE student_id=? AND status != 'rejected' ORDER BY created_at DESC LIMIT 1`,
     [student.id]
   )
   if (!appts[0]) return res.json(null)
   const appointment = appts[0]
 
-  const [evals] = await db.query('SELECT * FROM evaluations WHERE appointment_id=?', [appointment.id])
+  const [evals] = await db.query(`
+    SELECT e.*, ap.full_name AS evaluator_name
+    FROM evaluations e
+    LEFT JOIN admin_profiles ap ON ap.id = e.evaluator_id
+    WHERE e.appointment_id = ?
+  `, [appointment.id])
   res.json({ student, appointment, evaluation: evals[0] ?? null })
 })
 
@@ -175,7 +174,7 @@ app.patch('/api/appointments/:id/withdraw', async (req, res) => {
   const deadline = new Date(scheduledAt.getTime() - 2 * 60 * 60 * 1000)
 
   if (new Date() >= deadline)
-    return res.status(409).json({ error: 'WITHDRAWAL_DEADLINE: Cannot withdraw within 2 hours of your scheduled time' })
+    return res.status(409).json({ error: 'WITHDRAWAL_DEADLINE: Cannot withdraw within 3 hours of your scheduled time' })
 
   await db.query("UPDATE appointments SET status='cancelled' WHERE id=?", [id])
   res.json({ success: true })
@@ -222,7 +221,8 @@ app.patch('/api/appointments/:id/status', requireAuth, async (req, res) => {
   try {
     await conn.beginTransaction()
     const [result] = await conn.query('UPDATE appointments SET status=? WHERE id=?', [status, id])
-    if (result.affectedRows === 0) {
+    const affectedRows = result.affectedRows
+    if (affectedRows === 0) {
       await conn.rollback()
       return res.status(404).json({ error: 'Appointment not found' })
     }
@@ -252,6 +252,34 @@ app.get('/api/students', requireAuth, async (req, res) => {
   sql += ' ORDER BY created_at DESC'
   const [rows] = await db.query(sql, params)
   res.json(rows)
+})
+
+// ─── DELETE /api/appointments/:id ────────────────────────────────────────────
+app.delete('/api/appointments/:id', requireAuth, async (req, res) => {
+  const { id } = req.params
+  const adminId = req.admin.id
+  const conn = await db.getConnection()
+  try {
+    await conn.beginTransaction()
+    const [appts] = await conn.query('SELECT id FROM appointments WHERE id=?', [id])
+    if (!appts[0]) {
+      await conn.rollback()
+      return res.status(404).json({ error: 'Appointment not found' })
+    }
+    await conn.query('DELETE FROM evaluations WHERE appointment_id=?', [id])
+    await conn.query('DELETE FROM appointments WHERE id=?', [id])
+    await conn.query(
+      'INSERT INTO audit_logs (id,admin_id,action,target_type,target_id,metadata) VALUES (?,?,?,?,?,?)',
+      [randomUUID(), adminId, 'ADMIN_DELETE', 'appointment', id, JSON.stringify({ deleted_by: adminId })]
+    )
+    await conn.commit()
+    res.json({ success: true })
+  } catch (err) {
+    await conn.rollback()
+    res.status(500).json({ error: err.message })
+  } finally {
+    conn.release()
+  }
 })
 
 // ─── GET /api/evaluations ─────────────────────────────────────────────────────
@@ -325,6 +353,89 @@ app.post('/api/evaluations', requireAuth, async (req, res) => {
   }
 })
 
+// ─── GET  /api/settings/exam-dates ───────────────────────────────────────────
+app.get('/api/settings/exam-dates', async (req, res) => {
+  const [rows] = await db.query('SELECT exam_date FROM exam_dates ORDER BY exam_date ASC')
+  res.json(rows.map(r => (r.exam_date instanceof Date ? r.exam_date.toISOString() : String(r.exam_date)).slice(0, 10)))
+})
+
+// ─── POST /api/settings/exam-dates ───────────────────────────────────────────
+app.post('/api/settings/exam-dates', requireAuth, async (req, res) => {
+  const { exam_date } = req.body
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(exam_date))
+    return res.status(400).json({ error: 'Invalid date format. Use YYYY-MM-DD.' })
+  await db.query('INSERT IGNORE INTO exam_dates (id,exam_date,created_by) VALUES (?,?,?)',
+    [randomUUID(), exam_date, req.admin.id])
+  res.status(201).json({ success: true, exam_date })
+})
+
+// ─── DELETE /api/settings/exam-dates/:date ───────────────────────────────────
+app.delete('/api/settings/exam-dates/:date', requireAuth, async (req, res) => {
+  const { date } = req.params
+  const [[{ cnt }]] = await db.query(
+    `SELECT COUNT(*) AS cnt FROM appointments WHERE appointment_date = ? AND status NOT IN ('rejected')`,
+    [date]
+  )
+  if (cnt > 0)
+    return res.status(409).json({ error: 'Cannot remove a date that has existing bookings.' })
+  await db.query('DELETE FROM exam_dates WHERE exam_date = ?', [date])
+  res.json({ success: true })
+})
+
+// ─── PATCH /api/appointments/:id/reschedule ──────────────────────────────────
+app.patch('/api/appointments/:id/reschedule', async (req, res) => {
+  const { student_id, appointment_date, appointment_time } = req.body
+  const { id } = req.params
+  if (!student_id || !appointment_date || !appointment_time)
+    return res.status(400).json({ error: 'student_id, appointment_date and appointment_time required' })
+
+  const [rows] = await db.query(
+    `SELECT a.*, s.student_id AS s_student_id
+     FROM appointments a JOIN students s ON s.id = a.student_id WHERE a.id = ?`, [id])
+  const appt = rows[0]
+  if (!appt) return res.status(404).json({ error: 'Appointment not found' })
+  if (appt.s_student_id.toUpperCase() !== student_id.toUpperCase())
+    return res.status(403).json({ error: 'Not your appointment' })
+  if (!['pending', 'approved'].includes(appt.status))
+    return res.status(409).json({ error: 'Only pending or approved appointments can be rescheduled.' })
+
+  // 2-hour deadline check against CURRENT scheduled time
+  const dateStr = appt.appointment_date instanceof Date
+    ? appt.appointment_date.toISOString().slice(0, 10)
+    : String(appt.appointment_date).slice(0, 10)
+  const [y, mo, d] = dateStr.split('-').map(Number)
+  const [h, m] = String(appt.appointment_time).slice(0, 5).split(':').map(Number)
+  const scheduled = new Date(y, mo - 1, d, h, m)
+  const deadline = new Date(scheduled.getTime() - 2 * 60 * 60 * 1000)
+  if (new Date() >= deadline)
+    return res.status(409).json({ error: 'RESCHEDULE_DEADLINE: Cannot reschedule within 2 hours of your scheduled time.' })
+
+  // Validate new date is an exam date
+  const [examDates] = await db.query('SELECT id FROM exam_dates WHERE exam_date = ?', [appointment_date])
+  if (!examDates[0])
+    return res.status(400).json({ error: 'Selected date is not an available exam date.' })
+
+  // Check new time slot is not already taken
+  const [[{ taken }]] = await db.query(
+    `SELECT COUNT(*) AS taken FROM appointments
+     WHERE appointment_date=? AND appointment_time=? AND status NOT IN ('rejected','cancelled') AND id!=?`,
+    [appointment_date, appointment_time, id])
+  if (taken > 0)
+    return res.status(409).json({ error: 'SLOT_TAKEN: This time slot is already booked. Please choose another.' })
+
+  // Check new date is not full
+  const [[{ dateBooked }]] = await db.query(
+    `SELECT COUNT(*) AS dateBooked FROM appointments
+     WHERE appointment_date=? AND status NOT IN ('rejected','cancelled') AND id!=?`,
+    [appointment_date, id])
+  if (dateBooked >= MAX_BOOKINGS)
+    return res.status(409).json({ error: 'SLOT_FULL: No remaining slots for this date.' })
+
+  await db.query('UPDATE appointments SET appointment_date=?, appointment_time=? WHERE id=?',
+    [appointment_date, appointment_time, id])
+  res.json({ success: true })
+})
+
 // ─── GET /api/audit-logs ──────────────────────────────────────────────────────
 app.get('/api/audit-logs', requireAuth, async (req, res) => {
   const [rows] = await db.query('SELECT * FROM audit_logs ORDER BY created_at DESC LIMIT 200')
@@ -336,76 +447,18 @@ app.get('/api/dashboard/stats/:date', requireAuth, async (req, res) => {
   const { date } = req.params
   const [[stats]] = await db.query(`
     SELECT
-      COUNT(*)                                       AS total_booked,
-      SUM(a.status = 'pending')                      AS pending,
-      SUM(a.status = 'approved')                     AS approved,
-      SUM(a.status = 'evaluated')                    AS evaluated,
-      SUM(a.status = 'rejected')                     AS rejected,
-      SUM(a.status = 'cancelled')                    AS cancelled,
-      ROUND(AVG(e.total_score), 2)                   AS avg_score
+      SUM(a.status NOT IN ('rejected','cancelled'))   AS total_booked,
+      SUM(a.status = 'pending')                       AS pending,
+      SUM(a.status = 'approved')                      AS approved,
+      SUM(a.status = 'evaluated')                     AS evaluated,
+      SUM(a.status = 'rejected')                      AS rejected,
+      SUM(a.status = 'cancelled')                     AS cancelled,
+      ROUND(AVG(e.total_score), 2)                    AS avg_score
     FROM appointments a
     LEFT JOIN evaluations e ON e.appointment_id = a.id
     WHERE a.appointment_date = ?
   `, [date])
   res.json(stats)
-})
-
-// ─── PATCH /api/appointments/:id/withdraw ────────────────────────────────────
-app.patch('/api/appointments/:id/withdraw', async (req, res) => {
-  const { id } = req.params
-  const { student_id } = req.body
-  if (!student_id) return res.status(400).json({ error: 'student_id required' })
-
-  const [rows] = await db.query(
-    `SELECT a.*, s.student_id AS s_student_id
-     FROM appointments a JOIN students s ON s.id = a.student_id
-     WHERE a.id = ?`,
-    [id]
-  )
-  if (!rows[0]) return res.status(404).json({ error: 'Appointment not found' })
-  const appt = rows[0]
-
-  if (appt.s_student_id.toUpperCase() !== student_id.trim().toUpperCase()) {
-    return res.status(403).json({ error: 'Unauthorized: student ID mismatch' })
-  }
-
-  if (!['pending', 'approved'].includes(appt.status)) {
-    return res.status(409).json({ error: 'Appointment cannot be withdrawn in its current status' })
-  }
-
-  // Enforce 3-hour withdrawal deadline
-  const dateStr = appt.appointment_date instanceof Date
-    ? appt.appointment_date.toISOString().slice(0, 10)
-    : String(appt.appointment_date).slice(0, 10)
-  const timeStr = String(appt.appointment_time).slice(0, 5)
-  const [y, mo, d] = dateStr.split('-').map(Number)
-  const [h, m] = timeStr.split(':').map(Number)
-  const scheduled = new Date(y, mo - 1, d, h, m)
-  const deadline  = new Date(scheduled.getTime() - 3 * 60 * 60 * 1000)
-
-  if (new Date() >= deadline) {
-    return res.status(409).json({
-      error: 'WITHDRAWAL_DEADLINE: Cannot withdraw within 3 hours of your scheduled appointment',
-    })
-  }
-
-  const conn = await db.getConnection()
-  try {
-    await conn.beginTransaction()
-    await conn.query("UPDATE appointments SET status='cancelled' WHERE id=?", [id])
-    await conn.query(
-      'INSERT INTO audit_logs (id,admin_id,action,target_type,target_id,metadata) VALUES (?,?,?,?,?,?)',
-      [randomUUID(), null, 'STUDENT_WITHDRAW', 'appointment', id,
-       JSON.stringify({ student_id: appt.s_student_id })]
-    )
-    await conn.commit()
-    res.json({ success: true })
-  } catch (err) {
-    await conn.rollback()
-    res.status(500).json({ error: err.message })
-  } finally {
-    conn.release()
-  }
 })
 
 // ─── GET /api/appointments/:id ───────────────────────────────────────────────
@@ -437,4 +490,27 @@ function pickEval(r) {
 }
 
 
-app.listen(PORT, () => console.log(`EvalBook API running on http://localhost:${PORT}`))
+async function initDb() {
+  await db.query(`
+    CREATE TABLE IF NOT EXISTS exam_dates (
+      id VARCHAR(36) NOT NULL,
+      exam_date DATE NOT NULL,
+      created_by VARCHAR(36),
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      PRIMARY KEY (id),
+      UNIQUE KEY uq_exam_date (exam_date)
+    )
+  `)
+  const [[{ cnt }]] = await db.query('SELECT COUNT(*) AS cnt FROM exam_dates')
+  if (cnt === 0) {
+    const defaults = ['2026-05-29','2026-05-30','2026-06-01','2026-06-05','2026-06-06']
+    for (const d of defaults) {
+      await db.query('INSERT IGNORE INTO exam_dates (id,exam_date) VALUES (?,?)', [randomUUID(), d])
+    }
+  }
+}
+
+app.listen(PORT, async () => {
+  await initDb()
+  console.log(`EvalBook API running on http://localhost:${PORT}`)
+})

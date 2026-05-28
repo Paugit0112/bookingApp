@@ -7,7 +7,7 @@ import { toast } from 'sonner'
 import {
   Search, Calendar, Clock, User, CreditCard, BookOpen,
   CheckCircle2, XCircle, ClipboardCheck,
-  Download, Moon, Sun, ArrowLeft, MapPin, LogOut, Hash,
+  Download, Moon, Sun, ArrowLeft, MapPin, LogOut, Hash, Award, Pencil,
 } from 'lucide-react'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
@@ -17,16 +17,20 @@ import { Separator } from '@/components/ui/separator'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Badge } from '@/components/ui/badge'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from '@/components/ui/dialog'
+import { Label } from '@/components/ui/label'
+import { Select, SelectContent, SelectGroup, SelectItem, SelectLabel, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { StatusBadge } from '@/components/shared/StatusBadge'
 import { lookupSchema, type LookupSchema } from '@/schemas'
 import { useStudentAppointment } from '@/hooks/useAppointments'
+import { useExamDates } from '@/hooks/useExamDates'
+import { useDailySlots } from '@/hooks/useSlots'
 import { useTheme } from '@/components/shared/ThemeProvider'
-import { formatDate, formatTime, getScoreGrade } from '@/lib/utils'
+import { formatDate, formatTime, getScoreGrade, cn, VENUE, getAvailableTimeSlots } from '@/lib/utils'
 import { CHECKLIST_CRITERIA, RECOMMENDATION_LABELS, RECOMMENDATION_COLORS } from '@/types'
 import { generateAppointmentSlipPDF } from '@/lib/pdf'
-import { cn, VENUE } from '@/lib/utils'
 import { api } from '@/lib/api'
-import type { Recommendation } from '@/types'
+import type { Recommendation, AppointmentStatus } from '@/types'
 
 export default function StudentDashboardPage() {
   const { resolvedTheme, setTheme } = useTheme()
@@ -35,23 +39,42 @@ export default function StudentDashboardPage() {
     searchParams.get('sid') ?? null
   )
   const [isWithdrawing, setIsWithdrawing] = useState(false)
+  const [showReschedule, setShowReschedule] = useState(false)
+  const [rescheduleDate, setRescheduleDate] = useState('')
+  const [rescheduleTime, setRescheduleTime] = useState('')
+  const [isRescheduling, setIsRescheduling] = useState(false)
 
-  const { data, isLoading, error, refetch } = useStudentAppointment(lookupId)
+  const { data, isLoading, refetch } = useStudentAppointment(lookupId)
+  const { data: examDates } = useExamDates()
+  const { data: slotInfo } = useDailySlots(rescheduleDate)
 
-  const withdrawDeadline = useMemo(() => {
+  const TIME_SLOTS = getAvailableTimeSlots()
+
+  const appointmentDeadline = useMemo(() => {
     if (!data?.appointment) return null
     const { appointment_date, appointment_time } = data.appointment
     const [y, mo, d] = appointment_date.slice(0, 10).split('-').map(Number)
     const [h, m] = appointment_time.slice(0, 5).split(':').map(Number)
     const scheduled = new Date(y, mo - 1, d, h, m)
-    return new Date(scheduled.getTime() - 3 * 60 * 60 * 1000)
+    return {
+      withdraw: new Date(scheduled.getTime() - 3 * 60 * 60 * 1000),
+      reschedule: new Date(scheduled.getTime() - 2 * 60 * 60 * 1000),
+    }
   }, [data])
 
+  const withdrawDeadline = appointmentDeadline?.withdraw ?? null
+
   const canWithdraw = useMemo(() => {
-    if (!data?.appointment || !withdrawDeadline) return false
+    if (!data?.appointment || !appointmentDeadline) return false
     if (!['pending', 'approved'].includes(data.appointment.status)) return false
-    return new Date() < withdrawDeadline
-  }, [data, withdrawDeadline])
+    return new Date() < appointmentDeadline.withdraw
+  }, [data, appointmentDeadline])
+
+  const canReschedule = useMemo(() => {
+    if (!data?.appointment || !appointmentDeadline) return false
+    if (!['pending', 'approved'].includes(data.appointment.status)) return false
+    return new Date() < appointmentDeadline.reschedule
+  }, [data, appointmentDeadline])
 
   const handleWithdraw = async () => {
     if (!data?.appointment || !lookupId) return
@@ -69,6 +92,36 @@ export default function StudentDashboardPage() {
       }
     } finally {
       setIsWithdrawing(false)
+    }
+  }
+
+  const handleReschedule = async () => {
+    if (!data?.appointment || !lookupId || !rescheduleDate || !rescheduleTime) return
+    setIsRescheduling(true)
+    try {
+      await api.booking.reschedule(data.appointment.id, {
+        student_id: lookupId,
+        appointment_date: rescheduleDate,
+        appointment_time: rescheduleTime,
+      })
+      toast.success('Appointment rescheduled successfully.')
+      setShowReschedule(false)
+      setRescheduleDate('')
+      setRescheduleTime('')
+      refetch()
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Reschedule failed'
+      if (msg.includes('RESCHEDULE_DEADLINE')) {
+        toast.error('Cannot reschedule within 2 hours of your scheduled time.')
+      } else if (msg.includes('SLOT_TAKEN')) {
+        toast.error('That time slot is already taken. Please choose another.')
+      } else if (msg.includes('SLOT_FULL')) {
+        toast.error('No remaining slots for that date. Please choose another date.')
+      } else {
+        toast.error(msg)
+      }
+    } finally {
+      setIsRescheduling(false)
     }
   }
 
@@ -172,7 +225,7 @@ export default function StudentDashboardPage() {
               exit={{ opacity: 0 }}
               className="space-y-4"
             >
-              <Tabs defaultValue="appointment">
+              <Tabs defaultValue={data.evaluation ? 'evaluation' : 'appointment'}>
                 <TabsList className="w-full">
                   <TabsTrigger value="appointment" className="flex-1 gap-1.5">
                     <Calendar className="h-3.5 w-3.5" />
@@ -181,6 +234,9 @@ export default function StudentDashboardPage() {
                   <TabsTrigger value="evaluation" className="flex-1 gap-1.5">
                     <ClipboardCheck className="h-3.5 w-3.5" />
                     Evaluation
+                    {data.evaluation && (
+                      <span className="h-2 w-2 rounded-full bg-green-500 shrink-0" />
+                    )}
                   </TabsTrigger>
                 </TabsList>
 
@@ -192,14 +248,18 @@ export default function StudentDashboardPage() {
                     canWithdraw={canWithdraw}
                     isWithdrawing={isWithdrawing}
                     withdrawDeadline={withdrawDeadline}
+                    canReschedule={canReschedule}
                     onWithdraw={handleWithdraw}
+                    onReschedule={() => setShowReschedule(true)}
                     onDownload={() => generateAppointmentSlipPDF(data.student, data.appointment)}
                   />
                 </TabsContent>
 
                 {/* ── Evaluation Tab ── */}
                 <TabsContent value="evaluation" className="mt-4">
-                  {!data.evaluation ? (
+                  {data.evaluation ? (
+                    <EvaluationResults evaluation={data.evaluation} />
+                  ) : (
                     <Card>
                       <CardContent className="flex flex-col items-center gap-3 py-10">
                         <ClipboardCheck className="h-10 w-10 text-muted-foreground/50" />
@@ -209,8 +269,6 @@ export default function StudentDashboardPage() {
                         </p>
                       </CardContent>
                     </Card>
-                  ) : (
-                    <EvaluationResults evaluation={data.evaluation} />
                   )}
                 </TabsContent>
               </Tabs>
@@ -218,6 +276,124 @@ export default function StudentDashboardPage() {
           )}
         </AnimatePresence>
       </main>
+
+      {/* ── Reschedule Dialog ── */}
+      <Dialog open={showReschedule} onOpenChange={open => { if (!open) { setShowReschedule(false); setRescheduleDate(''); setRescheduleTime('') } }}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Reschedule Appointment</DialogTitle>
+            <DialogDescription>
+              Select a new date and time. You cannot reschedule within 2 hours of your current slot.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4 py-2">
+            {/* Date selection */}
+            <div className="space-y-1.5">
+              <Label>New Date</Label>
+              <Select value={rescheduleDate} onValueChange={v => { setRescheduleDate(v); setRescheduleTime('') }}>
+                <SelectTrigger><SelectValue placeholder="Select a date" /></SelectTrigger>
+                <SelectContent>
+                  {(examDates ?? []).map(d => (
+                    <SelectItem key={d} value={d}>{formatDate(d)}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              {/* Slot availability note for selected date */}
+              {rescheduleDate && slotInfo && (
+                <div className={cn(
+                  'flex items-center gap-2 rounded-md px-3 py-2 text-xs border',
+                  slotInfo.is_full
+                    ? 'bg-red-50 dark:bg-red-950/40 text-red-600 dark:text-red-400 border-red-200 dark:border-red-800'
+                    : 'bg-green-50 dark:bg-green-950/40 text-green-700 dark:text-green-400 border-green-200 dark:border-green-800'
+                )}>
+                  {slotInfo.is_full
+                    ? <><XCircle className="h-3.5 w-3.5 shrink-0" /><span>Fully booked — select another date.</span></>
+                    : <><CheckCircle2 className="h-3.5 w-3.5 shrink-0" /><span>{slotInfo.remaining} of 26 slots remaining.</span></>
+                  }
+                </div>
+              )}
+            </div>
+
+            {/* Time selection — only when date is chosen and not full */}
+            {rescheduleDate && slotInfo && !slotInfo.is_full && (
+              <div className="space-y-1.5">
+                <div className="flex items-center justify-between">
+                  <Label>New Time</Label>
+                  <div className="flex items-center gap-3 text-xs text-muted-foreground">
+                    <span className="flex items-center gap-1">
+                      <span className="h-2 w-2 rounded-full bg-green-500 inline-block" />
+                      <span>Available</span>
+                    </span>
+                    <span className="flex items-center gap-1">
+                      <span className="h-2 w-2 rounded-full bg-red-400 inline-block" />
+                      <span>Taken</span>
+                    </span>
+                  </div>
+                </div>
+                <Select value={rescheduleTime} onValueChange={setRescheduleTime}>
+                  <SelectTrigger><SelectValue placeholder="Select a time slot" /></SelectTrigger>
+                  <SelectContent>
+                    <SelectGroup>
+                      <SelectLabel>Morning (9:00 AM – 11:40 AM)</SelectLabel>
+                      {TIME_SLOTS.filter(t => Number.parseInt(t.split(':')[0]) < 12).map(t => {
+                        const taken = (slotInfo?.booked_times ?? []).includes(t)
+                        return (
+                          <SelectItem key={t} value={t} disabled={taken}>
+                            <div className="flex items-center gap-2 w-full">
+                              <span className={`h-1.5 w-1.5 rounded-full shrink-0 ${taken ? 'bg-red-400' : 'bg-green-500'}`} />
+                              <span className={taken ? 'line-through text-muted-foreground' : ''}>{formatTime(t)}</span>
+                              <span className={`ml-4 text-xs ${taken ? 'text-red-400' : 'text-green-500'}`}>{taken ? 'Taken' : 'Available'}</span>
+                            </div>
+                          </SelectItem>
+                        )
+                      })}
+                    </SelectGroup>
+                    <SelectGroup>
+                      <SelectLabel>Afternoon (1:00 PM – 4:40 PM)</SelectLabel>
+                      {TIME_SLOTS.filter(t => { const h = Number.parseInt(t.split(':')[0]); return h >= 13 && h < 17 }).map(t => {
+                        const taken = (slotInfo?.booked_times ?? []).includes(t)
+                        return (
+                          <SelectItem key={t} value={t} disabled={taken}>
+                            <div className="flex items-center gap-2 w-full">
+                              <span className={`h-1.5 w-1.5 rounded-full shrink-0 ${taken ? 'bg-red-400' : 'bg-green-500'}`} />
+                              <span className={taken ? 'line-through text-muted-foreground' : ''}>{formatTime(t)}</span>
+                              <span className={`ml-4 text-xs ${taken ? 'text-red-400' : 'text-green-500'}`}>{taken ? 'Taken' : 'Available'}</span>
+                            </div>
+                          </SelectItem>
+                        )
+                      })}
+                    </SelectGroup>
+                    <SelectGroup>
+                      <SelectLabel>Evening (5:00 PM – 6:20 PM)</SelectLabel>
+                      {TIME_SLOTS.filter(t => Number.parseInt(t.split(':')[0]) >= 17).map(t => {
+                        const taken = (slotInfo?.booked_times ?? []).includes(t)
+                        return (
+                          <SelectItem key={t} value={t} disabled={taken}>
+                            <div className="flex items-center gap-2 w-full">
+                              <span className={`h-1.5 w-1.5 rounded-full shrink-0 ${taken ? 'bg-red-400' : 'bg-green-500'}`} />
+                              <span className={taken ? 'line-through text-muted-foreground' : ''}>{formatTime(t)}</span>
+                              <span className={`ml-4 text-xs ${taken ? 'text-red-400' : 'text-green-500'}`}>{taken ? 'Taken' : 'Available'}</span>
+                            </div>
+                          </SelectItem>
+                        )
+                      })}
+                    </SelectGroup>
+                  </SelectContent>
+                </Select>
+              </div>
+            )}
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setShowReschedule(false)} disabled={isRescheduling}>Cancel</Button>
+            <Button
+              onClick={handleReschedule}
+              disabled={!rescheduleDate || !rescheduleTime || isRescheduling || !!slotInfo?.is_full}
+            >
+              {isRescheduling ? 'Saving…' : 'Confirm Reschedule'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }
@@ -230,17 +406,20 @@ function makeBookingRef(id: string): string {
 
 interface AppointmentSlipProps {
   student: { full_name: string; student_id: string; section: string }
-  appointment: { id: string; appointment_date: string; appointment_time: string; status: string }
+  appointment: { id: string; appointment_date: string; appointment_time: string; status: AppointmentStatus }
   canWithdraw: boolean
   isWithdrawing: boolean
   withdrawDeadline: Date | null
+  canReschedule: boolean
   onWithdraw: () => void
+  onReschedule: () => void
   onDownload: () => void
 }
 
 function AppointmentSlip({
-  student, appointment, canWithdraw, isWithdrawing, withdrawDeadline, onWithdraw, onDownload,
-}: AppointmentSlipProps) {
+  student, appointment, canWithdraw, isWithdrawing, withdrawDeadline,
+  canReschedule, onWithdraw, onReschedule, onDownload,
+}: Readonly<AppointmentSlipProps>) {
   const bookingRef = makeBookingRef(appointment.id)
   const isActive = appointment.status === 'pending' || appointment.status === 'approved'
 
@@ -309,6 +488,26 @@ function AppointmentSlip({
         Download Appointment Slip
       </Button>
 
+      {/* Reschedule */}
+      {isActive && (
+        <div className="space-y-1">
+          <Button
+            variant="outline"
+            className="w-full gap-2"
+            disabled={!canReschedule}
+            onClick={onReschedule}
+          >
+            <Pencil className="h-4 w-4" />
+            {canReschedule ? 'Edit Appointment' : 'Edit unavailable (within 2 hrs)'}
+          </Button>
+          {!canReschedule && (
+            <p className="text-xs text-center text-muted-foreground">
+              Editing is locked within 2 hours of your scheduled time.
+            </p>
+          )}
+        </div>
+      )}
+
       {/* Withdraw */}
       {isActive && (
         <div className="space-y-2">
@@ -334,7 +533,7 @@ function AppointmentSlip({
   )
 }
 
-function SlipDetailRow({ icon, label, value }: { icon: React.ReactNode; label: string; value: string }) {
+function SlipDetailRow({ icon, label, value }: Readonly<{ icon: React.ReactNode; label: string; value: string }>) {
   return (
     <div className="flex items-center gap-2">
       <span className="text-muted-foreground shrink-0">{icon}</span>
@@ -344,22 +543,48 @@ function SlipDetailRow({ icon, label, value }: { icon: React.ReactNode; label: s
   )
 }
 
-function EvaluationResults({ evaluation }: { evaluation: NonNullable<ReturnType<typeof useStudentAppointment>['data']>['evaluation'] }) {
+function EvaluationResults({ evaluation }: Readonly<{ evaluation: NonNullable<ReturnType<typeof useStudentAppointment>['data']>['evaluation'] }>) {
   if (!evaluation) return null
-  const grade = getScoreGrade(evaluation.total_score)
+  const totalScore = Number(evaluation.total_score)
+  const grade = getScoreGrade(totalScore)
   const rec = evaluation.recommendation as Recommendation
+  const evaluatedDate = evaluation.evaluated_at
+    ? new Date(evaluation.evaluated_at).toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })
+    : null
 
   return (
     <div className="space-y-4">
+      {/* Meta — evaluator & date */}
+      <div className="flex items-center justify-between rounded-lg border bg-muted/30 px-4 py-2.5 text-xs text-muted-foreground">
+        <div className="flex items-center gap-1.5">
+          <User className="h-3.5 w-3.5 shrink-0" />
+          <span>
+            Evaluated by{' '}
+            <span className="font-semibold text-foreground">
+              {evaluation.evaluator_name ?? 'Evaluator'}
+            </span>
+          </span>
+        </div>
+        {evaluatedDate && (
+          <div className="flex items-center gap-1.5">
+            <Clock className="h-3.5 w-3.5 shrink-0" />
+            <span>{evaluatedDate}</span>
+          </div>
+        )}
+      </div>
+
       {/* Score summary */}
       <Card>
         <CardContent className="pt-6 space-y-4">
           <div className="text-center space-y-1">
-            <p className="text-5xl font-bold text-primary">{evaluation.total_score.toFixed(1)}</p>
+            <div className="flex items-center justify-center gap-2">
+              <Award className="h-6 w-6 text-primary" />
+              <p className="text-5xl font-bold text-primary">{totalScore.toFixed(1)}</p>
+            </div>
             <p className="text-sm text-muted-foreground">out of 100</p>
-            <span className={cn('font-semibold', grade.color)}>{grade.grade}</span>
+            <span className={cn('font-semibold text-sm', grade.color)}>{grade.grade}</span>
           </div>
-          <Progress value={evaluation.total_score} className="h-3" />
+          <Progress value={totalScore} className="h-3" />
 
           <div className={cn('rounded-lg border px-4 py-2 text-sm font-semibold text-center', RECOMMENDATION_COLORS[rec])}>
             Recommendation: {RECOMMENDATION_LABELS[rec]}
@@ -374,7 +599,7 @@ function EvaluationResults({ evaluation }: { evaluation: NonNullable<ReturnType<
         </CardHeader>
         <CardContent className="space-y-3">
           {CHECKLIST_CRITERIA.map((criterion) => {
-            const score = evaluation[criterion.key as keyof typeof evaluation] as number
+            const score = Number(evaluation[criterion.key as keyof typeof evaluation])
             const pct = (score / criterion.maxScore) * 100
             return (
               <div key={criterion.key} className="space-y-1">

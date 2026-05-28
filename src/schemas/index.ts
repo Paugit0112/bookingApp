@@ -3,20 +3,11 @@ import { z } from 'zod'
 // ─── Booking Form Schema ──────────────────────────────────────────────────────
 
 export const bookingSchema = z.object({
-  full_name: z
-    .string()
-    .min(2, 'Full name must be at least 2 characters')
-    .max(100, 'Full name must be at most 100 characters')
-    .regex(/^[a-zA-Z\s.'-]+$/, 'Full name can only contain letters, spaces, and basic punctuation'),
   student_id: z
     .string()
     .min(5, 'Student ID must be at least 5 characters')
     .max(20, 'Student ID must be at most 20 characters')
     .regex(/^[A-Z0-9-]+$/i, 'Student ID must contain only letters, numbers, and hyphens'),
-  section: z.enum(['AD1', 'BLM1', 'CM1', 'EN1'], {
-    required_error: 'Please select a section',
-    invalid_type_error: 'Please select a valid section',
-  }),
   appointment_date: z
     .string()
     .min(1, 'Please select an appointment date'),

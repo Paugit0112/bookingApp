@@ -2,7 +2,6 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { api } from '@/lib/api'
 import type { TableFilters } from '@/types'
 import { toast } from 'sonner'
-import { useAuthStore } from '@/stores/authStore'
 
 export function useAppointments(filters?: TableFilters) {
   return useQuery({
@@ -25,7 +24,6 @@ export function useStudentAppointment(studentId: string | null) {
 
 export function useUpdateAppointmentStatus() {
   const queryClient = useQueryClient()
-  const { user } = useAuthStore()
 
   return useMutation({
     mutationFn: async ({
@@ -44,6 +42,21 @@ export function useUpdateAppointmentStatus() {
     },
     onError: (err: Error) => {
       toast.error(`Failed to update: ${err.message}`)
+    },
+  })
+}
+
+export function useDeleteAppointment() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: (appointmentId: string) => api.appointments.delete(appointmentId),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['appointments'] })
+      queryClient.invalidateQueries({ queryKey: ['dashboard-stats'] })
+      toast.success('Appointment deleted. The student may now rebook.')
+    },
+    onError: (err: Error) => {
+      toast.error(`Failed to delete: ${err.message}`)
     },
   })
 }

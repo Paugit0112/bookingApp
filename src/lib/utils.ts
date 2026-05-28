@@ -1,6 +1,5 @@
 import { type ClassValue, clsx } from 'clsx'
 import { twMerge } from 'tailwind-merge'
-import { format, parseISO, isToday, isTomorrow } from 'date-fns'
 
 export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs))
@@ -8,9 +7,16 @@ export function cn(...inputs: ClassValue[]) {
 
 // ─── Date & Time Helpers ──────────────────────────────────────────────────────
 
+function toLocalDate(dateStr: string): Date {
+  // Slice to "YYYY-MM-DD" so MySQL ISO timestamps don't break the constructor
+  return new Date(dateStr.slice(0, 10) + 'T00:00:00')
+}
+
 export function formatDate(dateStr: string): string {
   try {
-    return format(parseISO(dateStr), 'MMMM d, yyyy')
+    return toLocalDate(dateStr).toLocaleDateString('en-US', {
+      month: 'long', day: 'numeric', year: 'numeric',
+    })
   } catch {
     return dateStr
   }
@@ -18,7 +24,10 @@ export function formatDate(dateStr: string): string {
 
 export function formatDateTime(dateStr: string): string {
   try {
-    return format(parseISO(dateStr), 'MMM d, yyyy • h:mm a')
+    const d = new Date(dateStr)
+    const datePart = d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
+    const timePart = d.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true })
+    return `${datePart} • ${timePart}`
   } catch {
     return dateStr
   }
@@ -27,9 +36,9 @@ export function formatDateTime(dateStr: string): string {
 export function formatTime(time: string): string {
   try {
     const [hours, minutes] = time.split(':').map(Number)
-    const date = new Date()
-    date.setHours(hours, minutes)
-    return format(date, 'h:mm a')
+    const d = new Date()
+    d.setHours(hours, minutes, 0, 0)
+    return d.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true })
   } catch {
     return time
   }
@@ -37,22 +46,31 @@ export function formatTime(time: string): string {
 
 export function getRelativeDateLabel(dateStr: string): string {
   try {
-    const date = parseISO(dateStr)
-    if (isToday(date)) return 'Today'
-    if (isTomorrow(date)) return 'Tomorrow'
-    return format(date, 'MMMM d, yyyy')
+    const date = toLocalDate(dateStr)
+    const today = new Date(); today.setHours(0, 0, 0, 0)
+    const tomorrow = new Date(today); tomorrow.setDate(today.getDate() + 1)
+    if (date.getTime() === today.getTime()) return 'Today'
+    if (date.getTime() === tomorrow.getTime()) return 'Tomorrow'
+    return date.toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })
   } catch {
     return dateStr
   }
 }
 
 export function getAvailableTimeSlots(): string[] {
-  // 9:00 AM – 6:40 PM, 20-minute intervals (30 slots, max 24 booked/day)
+  // 9:00–11:40 AM, 1:00–4:40 PM (lunch 12:00–12:40 excluded), 5:00–6:20 PM → 26 slots
+  const ranges = [
+    { from: 9 * 60,  to: 11 * 60 + 40 },
+    { from: 13 * 60, to: 16 * 60 + 40 },
+    { from: 17 * 60, to: 18 * 60 + 20 },
+  ]
   const slots: string[] = []
-  for (let total = 9 * 60; total <= 18 * 60 + 40; total += 20) {
-    const h = Math.floor(total / 60)
-    const m = total % 60
-    slots.push(`${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`)
+  for (const { from, to } of ranges) {
+    for (let total = from; total <= to; total += 20) {
+      const h = Math.floor(total / 60)
+      const m = total % 60
+      slots.push(`${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`)
+    }
   }
   return slots
 }
@@ -110,4 +128,4 @@ export const STATUS_CONFIG = {
   cancelled: { label: 'Cancelled', className: 'bg-gray-100 text-gray-800 border-gray-200' },
 } as const
 
-export const MAX_BOOKINGS_PER_DAY = Number(import.meta.env.VITE_MAX_BOOKINGS_PER_DAY) || 24
+export const MAX_BOOKINGS_PER_DAY = Number(import.meta.env.VITE_MAX_BOOKINGS_PER_DAY) || 26

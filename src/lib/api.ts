@@ -28,7 +28,7 @@ async function request<T>(
   const res = await fetch(`${BASE}${path}`, {
     method,
     headers,
-    body: body !== undefined ? JSON.stringify(body) : undefined,
+    body: body === undefined ? undefined : JSON.stringify(body),
   })
   const json = await res.json()
   if (!res.ok) throw new Error(json.error ?? `Request failed: ${res.status}`)
@@ -51,7 +51,7 @@ export const api = {
   // ─── Slots ──────────────────────────────────────────────────────────────────
   slots: {
     async get(date: string) {
-      return request<{ date: string; booked: number; remaining: number; is_full: boolean }>(
+      return request<{ date: string; booked: number; remaining: number; is_full: boolean; booked_times: string[] }>(
         'GET', `/slots/${date}`
       )
     },
@@ -60,9 +60,7 @@ export const api = {
   // ─── Booking ────────────────────────────────────────────────────────────────
   booking: {
     async create(payload: {
-      full_name: string
       student_id: string
-      section: string
       appointment_date: string
       appointment_time: string
     }) {
@@ -74,6 +72,9 @@ export const api = {
     async withdraw(appointmentId: string, studentId: string) {
       return request<{ success: boolean }>('PATCH', `/appointments/${appointmentId}/withdraw`, { student_id: studentId })
     },
+    async reschedule(appointmentId: string, payload: { student_id: string; appointment_date: string; appointment_time: string }) {
+      return request<{ success: boolean }>('PATCH', `/appointments/${appointmentId}/reschedule`, payload)
+    },
   },
 
   // ─── Appointments ────────────────────────────────────────────────────────────
@@ -84,13 +85,16 @@ export const api = {
       if (filters?.date)   params.set('date', filters.date)
       if (filters?.search) params.set('search', filters.search)
       const qs = params.toString()
-      return request<AppointmentRow[]>('GET', `/appointments${qs ? `?${qs}` : ''}`, undefined, true)
+      return request<AppointmentRow[]>('GET', '/appointments' + (qs ? '?' + qs : ''), undefined, true)
     },
     async get(id: string) {
       return request<AppointmentRow>('GET', `/appointments/${id}`, undefined, true)
     },
     async updateStatus(id: string, status: string) {
       return request<{ success: boolean }>('PATCH', `/appointments/${id}/status`, { status }, true)
+    },
+    async delete(id: string) {
+      return request<{ success: boolean }>('DELETE', `/appointments/${id}`, undefined, true)
     },
   },
 
@@ -126,6 +130,15 @@ export const api = {
     },
   },
 
+  // ─── Settings ────────────────────────────────────────────────────────────────
+  settings: {
+    examDates: {
+      async list() { return request<string[]>('GET', '/settings/exam-dates') },
+      async add(date: string) { return request<{ success: boolean; exam_date: string }>('POST', '/settings/exam-dates', { exam_date: date }, true) },
+      async remove(date: string) { return request<{ success: boolean }>('DELETE', `/settings/exam-dates/${date}`, undefined, true) },
+    },
+  },
+
   // ─── Dashboard ───────────────────────────────────────────────────────────────
   dashboard: {
     async stats(date: string) {
@@ -135,6 +148,8 @@ export const api = {
 }
 
 // ─── Row types ────────────────────────────────────────────────────────────────
+import type { AppointmentStatus } from '@/types'
+
 export interface AdminProfileRow {
   id: string
   full_name: string
@@ -157,7 +172,7 @@ export interface AppointmentRow {
   student_id: string
   appointment_date: string
   appointment_time: string
-  status: string
+  status: AppointmentStatus
   created_at: string
   students?: StudentRow
 }
@@ -179,6 +194,7 @@ export interface EvaluationRow {
   evaluator_comments: string
   recommendation: string
   evaluated_at: string
+  evaluator_name?: string
   appointments?: {
     id: string
     appointment_date: string
