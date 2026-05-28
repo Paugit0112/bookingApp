@@ -160,6 +160,9 @@ export const api = {
     async push() {
       return request<SyncResult>('POST', '/sync', undefined, true)
     },
+    async pull() {
+      return request<SyncResult>('POST', '/sync/pull', undefined, true)
+    },
   },
 }
 

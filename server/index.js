@@ -551,6 +551,9 @@ app.post('/api/sync', requireAuth, async (req, res) => {
   if (!SB_URL || !SB_KEY || SB_KEY === 'your-service-role-key-here')
     return res.status(503).json({ error: 'Supabase not configured. Set SUPABASE_URL and SUPABASE_SERVICE_KEY in .env' })
 
+  // Strip trailing /rest/v1 so the URL can be provided in either format
+  const SB_BASE = SB_URL.replace(/\/rest\/v1\/?$/, '').replace(/\/$/, '')
+
   // Column sets that need special serialization
   const DATE_COLS = new Set(['appointment_date', 'exam_date'])
   const TIME_COLS = new Set(['appointment_time'])
@@ -573,7 +576,7 @@ app.post('/api/sync', requireAuth, async (req, res) => {
     if (!rows.length) return { count: 0, error: null }
     const CHUNK = 100
     for (let i = 0; i < rows.length; i += CHUNK) {
-      const r = await fetch(`${SB_URL}/rest/v1/${table}`, {
+      const r = await fetch(`${SB_BASE}/rest/v1/${table}`, {
         method: 'POST',
         headers: {
           apikey: SB_KEY,
@@ -609,6 +612,91 @@ app.post('/api/sync', requireAuth, async (req, res) => {
     res.json({ success: errors.length === 0, synced_at: new Date().toISOString(), results, errors })
   } catch (err) {
     res.status(500).json({ error: err.message })
+  }
+})
+
+// ─── POST /api/sync/pull ─────────────────────────────────────────────────────
+app.post('/api/sync/pull', requireAuth, async (req, res) => {
+  const SB_URL = process.env.SUPABASE_URL
+  const SB_KEY = process.env.SUPABASE_SERVICE_KEY
+
+  if (!SB_URL || !SB_KEY || SB_KEY === 'your-service-role-key-here')
+    return res.status(503).json({ error: 'Supabase not configured. Set SUPABASE_URL and SUPABASE_SERVICE_KEY in .env' })
+
+  const SB_BASE = SB_URL.replace(/\/rest\/v1\/?$/, '').replace(/\/$/, '')
+
+  // Fetch all rows from a Supabase table (paginated)
+  async function fetchAll(table) {
+    const rows = []
+    let offset = 0
+    const limit = 1000
+    while (true) {
+      const r = await fetch(`${SB_BASE}/rest/v1/${table}?select=*&limit=${limit}&offset=${offset}`, {
+        headers: { apikey: SB_KEY, Authorization: `Bearer ${SB_KEY}` },
+      })
+      if (!r.ok) return { rows: null, error: await r.text() }
+      const batch = await r.json()
+      rows.push(...batch)
+      if (batch.length < limit) break
+      offset += limit
+    }
+    return { rows, error: null }
+  }
+
+  // Upsert rows into local MySQL — skips generated columns
+  const SKIP = { evaluations: new Set(['total_score']) }
+
+  async function upsertLocal(conn, table, rows) {
+    if (!rows.length) return { count: 0, error: null }
+    const skip = SKIP[table] ?? new Set()
+    for (const row of rows) {
+      const entries = Object.entries(row)
+        .filter(([k]) => !skip.has(k))
+        .map(([k, v]) => {
+          // JSONB objects from Supabase → JSON string for MySQL
+          if (v !== null && typeof v === 'object' && !Array.isArray(v)) return [k, JSON.stringify(v)]
+          return [k, v]
+        })
+      const cols      = entries.map(([k])    => `\`${k}\``).join(', ')
+      const holders   = entries.map(()       => '?').join(', ')
+      const updates   = entries.filter(([k]) => k !== 'id')
+                               .map(([k])    => `\`${k}\` = VALUES(\`${k}\`)`)
+                               .join(', ')
+      const vals      = entries.map(([, v])  => v)
+      await conn.query(
+        `INSERT INTO \`${table}\` (${cols}) VALUES (${holders}) ON DUPLICATE KEY UPDATE ${updates}`,
+        vals
+      )
+    }
+    return { count: rows.length, error: null }
+  }
+
+  const results = { students: 0, appointments: 0, evaluations: 0 }
+  const errors  = []
+  const conn    = await db.getConnection()
+
+  try {
+    await conn.beginTransaction()
+
+    // Pull in FK-safe order: students first, then appointments, then evaluations
+    for (const table of ['students', 'appointments', 'evaluations']) {
+      const { rows, error: fetchErr } = await fetchAll(table)
+      if (fetchErr) { errors.push({ table, error: fetchErr }); continue }
+
+      const { count, error: upsertErr } = await upsertLocal(conn, table, rows)
+      results[table] = count
+      if (upsertErr) errors.push({ table, error: upsertErr })
+    }
+
+    if (errors.length > 0) await conn.rollback()
+    else await conn.commit()
+
+    res.json({ success: errors.length === 0, synced_at: new Date().toISOString(), results, errors })
+  } catch (err) {
+    await conn.rollback()
+    res.status(500).json({ error: err.message })
+  } finally {
+    conn.release()
   }
 })
 

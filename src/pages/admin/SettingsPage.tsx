@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { Trash2, Plus, CalendarDays, AlertCircle, User, Lock, Eye, EyeOff, CloudUpload, RefreshCw, CheckCircle2, XCircle } from 'lucide-react'
+import { Trash2, Plus, CalendarDays, AlertCircle, User, Lock, Eye, EyeOff, UploadCloud, DownloadCloud, RefreshCw, CheckCircle2, XCircle } from 'lucide-react'
 import { toast } from 'sonner'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
@@ -88,9 +88,16 @@ export default function SettingsPage() {
   }
 
   // ── Cloud sync ────────────────────────────────────────────────────────────
-  const [isSyncing, setIsSyncing] = useState(false)
-  const [syncError, setSyncError] = useState<string | null>(null)
-  const [lastSync, setLastSync] = useState<SyncResult | null>(loadLastSync)
+  const [isSyncing, setIsSyncing]   = useState(false)
+  const [syncError, setSyncError]   = useState<string | null>(null)
+  const [lastSync,  setLastSync]    = useState<SyncResult | null>(loadLastSync)
+
+  const [isPulling, setIsPulling]   = useState(false)
+  const [pullError, setPullError]   = useState<string | null>(null)
+  const [lastPull,  setLastPull]    = useState<SyncResult | null>(() => {
+    try { const s = localStorage.getItem('evalbook_last_pull'); return s ? JSON.parse(s) : null }
+    catch { return null }
+  })
 
   const handleSync = async () => {
     setIsSyncing(true)
@@ -101,9 +108,9 @@ export default function SettingsPage() {
       localStorage.setItem('evalbook_last_sync', JSON.stringify(result))
       const total = result.results.students + result.results.appointments + result.results.evaluations
       if (result.success) {
-        toast.success(`Sync complete — ${total} records pushed to Supabase.`)
+        toast.success(`Pushed ${total} records to Supabase.`)
       } else {
-        toast.warning(`Sync finished with ${result.errors.length} error(s). Check details below.`)
+        toast.warning(`Push finished with ${result.errors.length} error(s).`)
       }
     } catch (err) {
       const msg = err instanceof Error ? err.message : 'Sync failed.'
@@ -111,6 +118,28 @@ export default function SettingsPage() {
       toast.error(msg)
     } finally {
       setIsSyncing(false)
+    }
+  }
+
+  const handlePull = async () => {
+    setIsPulling(true)
+    setPullError(null)
+    try {
+      const result = await api.sync.pull()
+      setLastPull(result)
+      localStorage.setItem('evalbook_last_pull', JSON.stringify(result))
+      const total = result.results.students + result.results.appointments + result.results.evaluations
+      if (result.success) {
+        toast.success(`Pulled ${total} records from Supabase.`)
+      } else {
+        toast.warning(`Pull finished with ${result.errors.length} error(s).`)
+      }
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Pull failed.'
+      setPullError(msg)
+      toast.error(msg)
+    } finally {
+      setIsPulling(false)
     }
   }
 
@@ -126,79 +155,61 @@ export default function SettingsPage() {
         <Card>
           <CardHeader>
             <CardTitle className="flex items-center gap-2 text-base">
-              <CloudUpload className="h-4 w-4 text-primary" />
+              <UploadCloud className="h-4 w-4 text-primary" />
               Cloud Sync
             </CardTitle>
             <CardDescription>
-              Push all local records to Supabase. Run this after working offline to sync students,
-              appointments, and evaluations to the cloud.
+              Sync between local MySQL and Supabase. Use <strong>Push</strong> after working offline,
+              or <strong>Pull</strong> to restore local data from the cloud.
             </CardDescription>
           </CardHeader>
-          <CardContent className="space-y-4">
+          <CardContent className="space-y-0 divide-y">
 
-            {/* Last sync summary */}
-            {lastSync && (
-              <div className="rounded-lg border bg-muted/30 p-4 space-y-3">
-                <div className="flex items-center justify-between">
-                  <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Last Sync</p>
-                  <div className="flex items-center gap-1.5 text-xs">
-                    {lastSync.success
-                      ? <><CheckCircle2 className="h-3.5 w-3.5 text-green-500" /><span className="text-green-600 dark:text-green-400">Success</span></>
-                      : <><XCircle className="h-3.5 w-3.5 text-destructive" /><span className="text-destructive">Had errors</span></>
-                    }
-                  </div>
+            {/* ── Push: Local → Cloud ── */}
+            <div className="py-4 space-y-3">
+              <div className="flex items-center gap-2">
+                <UploadCloud className="h-4 w-4 text-blue-500 shrink-0" />
+                <div>
+                  <p className="text-sm font-medium">Local → Cloud</p>
+                  <p className="text-xs text-muted-foreground">Push local records to Supabase</p>
                 </div>
-                <p className="text-xs text-muted-foreground">
-                  {new Date(lastSync.synced_at).toLocaleString()}
-                </p>
-                <div className="grid grid-cols-3 gap-2 text-center text-xs">
-                  {([
-                    ['Students',     lastSync.results.students],
-                    ['Appointments', lastSync.results.appointments],
-                    ['Evaluations',  lastSync.results.evaluations],
-                  ] as const).map(([label, count]) => (
-                    <div key={label} className="rounded-md bg-muted px-2 py-1.5">
-                      <p className="font-bold text-sm">{count}</p>
-                      <p className="text-muted-foreground">{label}</p>
-                    </div>
-                  ))}
-                </div>
-                {lastSync.errors.length > 0 && (
-                  <div className="space-y-1">
-                    <Separator />
-                    {lastSync.errors.map((e, i) => (
-                      <p key={i} className="text-xs text-destructive">
-                        <span className="font-medium">{e.table}:</span> {e.error}
-                      </p>
-                    ))}
-                  </div>
-                )}
               </div>
-            )}
 
-            {/* Runtime error */}
-            {syncError && (
-              <div className="flex items-start gap-2 rounded-lg border border-destructive/40 bg-destructive/5 p-3 text-sm text-destructive">
-                <AlertCircle className="h-4 w-4 mt-0.5 shrink-0" />
-                <span>{syncError}</span>
-              </div>
-            )}
+              {lastSync && <SyncSummary result={lastSync} />}
+              {syncError && <SyncError message={syncError} />}
 
-            <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
-              <Button
-                onClick={handleSync}
-                disabled={isSyncing}
-                className="gap-2 sm:w-auto"
-              >
+              <Button onClick={handleSync} disabled={isSyncing || isPulling} className="gap-2">
                 {isSyncing
-                  ? <><RefreshCw className="h-4 w-4 animate-spin" />Syncing…</>
-                  : <><CloudUpload className="h-4 w-4" />Sync to Cloud</>
+                  ? <><RefreshCw className="h-4 w-4 animate-spin" />Pushing…</>
+                  : <><UploadCloud className="h-4 w-4" />Push to Cloud</>
                 }
               </Button>
-              <p className="text-xs text-muted-foreground">
-                Requires <code className="rounded bg-muted px-1 py-0.5 font-mono text-xs">SUPABASE_SERVICE_KEY</code> in <code className="rounded bg-muted px-1 py-0.5 font-mono text-xs">.env</code>
-              </p>
             </div>
+
+            {/* ── Pull: Cloud → Local ── */}
+            <div className="py-4 space-y-3">
+              <div className="flex items-center gap-2">
+                <DownloadCloud className="h-4 w-4 text-green-500 shrink-0" />
+                <div>
+                  <p className="text-sm font-medium">Cloud → Local</p>
+                  <p className="text-xs text-muted-foreground">Pull records from Supabase into local database</p>
+                </div>
+              </div>
+
+              {lastPull && <SyncSummary result={lastPull} />}
+              {pullError && <SyncError message={pullError} />}
+
+              <Button onClick={handlePull} disabled={isPulling || isSyncing} variant="outline" className="gap-2">
+                {isPulling
+                  ? <><RefreshCw className="h-4 w-4 animate-spin" />Pulling…</>
+                  : <><DownloadCloud className="h-4 w-4" />Pull from Cloud</>
+                }
+              </Button>
+            </div>
+
+            <p className="pt-3 text-xs text-muted-foreground">
+              Requires <code className="rounded bg-muted px-1 py-0.5 font-mono">SUPABASE_SERVICE_KEY</code> in <code className="rounded bg-muted px-1 py-0.5 font-mono">.env</code>
+            </p>
           </CardContent>
         </Card>
 
@@ -404,6 +415,46 @@ export default function SettingsPage() {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+    </div>
+  )
+}
+
+// ─── Shared sync sub-components ───────────────────────────────────────────────
+
+function SyncSummary({ result }: Readonly<{ result: SyncResult }>) {
+  return (
+    <div className="rounded-lg border bg-muted/30 p-3 space-y-2">
+      <div className="flex items-center justify-between text-xs">
+        <span className="text-muted-foreground">{new Date(result.synced_at).toLocaleString()}</span>
+        <div className="flex items-center gap-1">
+          {result.success
+            ? <><CheckCircle2 className="h-3.5 w-3.5 text-green-500" /><span className="text-green-600 dark:text-green-400">Success</span></>
+            : <><XCircle className="h-3.5 w-3.5 text-destructive" /><span className="text-destructive">Had errors</span></>
+          }
+        </div>
+      </div>
+      <div className="grid grid-cols-3 gap-1.5 text-center text-xs">
+        {(['Students', 'Appointments', 'Evaluations'] as const).map(label => (
+          <div key={label} className="rounded bg-muted px-2 py-1">
+            <p className="font-bold">{result.results[label.toLowerCase() as keyof typeof result.results]}</p>
+            <p className="text-muted-foreground">{label}</p>
+          </div>
+        ))}
+      </div>
+      {result.errors.length > 0 && result.errors.map((e, i) => (
+        <p key={i} className="text-xs text-destructive">
+          <span className="font-medium">{e.table}:</span> {e.error}
+        </p>
+      ))}
+    </div>
+  )
+}
+
+function SyncError({ message }: Readonly<{ message: string }>) {
+  return (
+    <div className="flex items-start gap-2 rounded-lg border border-destructive/40 bg-destructive/5 p-3 text-sm text-destructive">
+      <AlertCircle className="h-4 w-4 mt-0.5 shrink-0" />
+      <span>{message}</span>
     </div>
   )
 }
