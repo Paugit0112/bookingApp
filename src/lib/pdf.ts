@@ -1,6 +1,6 @@
 import jsPDF from 'jspdf'
 import autoTable from 'jspdf-autotable'
-import { format, parseISO } from 'date-fns'
+import { format } from 'date-fns'
 import type { Student, Appointment, Evaluation } from '@/types'
 import { CHECKLIST_CRITERIA, RECOMMENDATION_LABELS, MAX_TOTAL_SCORE } from '@/types'
 import { formatDate, formatTime, getScoreGrade } from '@/lib/utils'

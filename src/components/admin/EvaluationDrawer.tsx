@@ -16,7 +16,7 @@ import { api } from '@/lib/api'
 import { useAuthStore } from '@/stores/authStore'
 import { CHECKLIST_CRITERIA, MAX_TOTAL_SCORE, RECOMMENDATION_LABELS } from '@/types'
 import { cn, getScoreGrade } from '@/lib/utils'
-import type { Appointment, Recommendation } from '@/types'
+import type { Recommendation } from '@/types'
 import { useState } from 'react'
 
 interface EvaluationDrawerProps {

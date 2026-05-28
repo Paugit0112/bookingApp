@@ -51,7 +51,7 @@ export default function AuditLogsPage() {
       </tr>
     )
   } else {
-    tbodyContent = logs.map(log => (
+    tbodyContent = (logs ?? []).map(log => (
       <motion.tr
         key={log.id}
         initial={{ opacity: 0 }}
@@ -118,7 +118,7 @@ export default function AuditLogsPage() {
                     </span>
                   </div>
                   <p className="text-xs text-muted-foreground">{formatDateTime(log.created_at)}</p>
-                  {log.metadata && (
+                  {!!log.metadata && (
                     <p className="text-xs text-muted-foreground truncate">
                       {JSON.stringify(log.metadata)}
                     </p>
