@@ -1,5 +1,6 @@
 import { useState } from 'react'
-import { Trash2, Plus, CalendarDays, AlertCircle } from 'lucide-react'
+import { Trash2, Plus, CalendarDays, AlertCircle, User, Lock, Eye, EyeOff } from 'lucide-react'
+import { toast } from 'sonner'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -12,9 +13,14 @@ import {
 } from '@/components/ui/alert-dialog'
 import { AdminNavbar } from '@/components/shared/Adminnavbar'
 import { useExamDates, useAddExamDate, useRemoveExamDate } from '@/hooks/useExamDates'
+import { useAuthStore } from '@/stores/authStore'
+import { api } from '@/lib/api'
 import { formatDate } from '@/lib/utils'
 
 export default function SettingsPage() {
+  const { profile, setProfile } = useAuthStore()
+
+  // ── Exam dates state ──────────────────────────────────────────────────────
   const [newDate, setNewDate] = useState('')
   const [removingDate, setRemovingDate] = useState<string | null>(null)
 
@@ -32,13 +38,67 @@ export default function SettingsPage() {
     removeDate(removingDate, { onSettled: () => setRemovingDate(null) })
   }
 
+  // ── Profile (display name) state ──────────────────────────────────────────
+  const [displayName, setDisplayName] = useState(profile?.full_name ?? '')
+  const [isSavingProfile, setIsSavingProfile] = useState(false)
+
+  const handleSaveProfile = async () => {
+    if (!displayName.trim()) {
+      toast.error('Display name cannot be empty.')
+      return
+    }
+    setIsSavingProfile(true)
+    try {
+      const updated = await api.auth.updateProfile(displayName.trim())
+      setProfile(updated)
+      toast.success('Display name updated.')
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Update failed.')
+    } finally {
+      setIsSavingProfile(false)
+    }
+  }
+
+  // ── Password state ────────────────────────────────────────────────────────
+  const [pwForm, setPwForm] = useState({ current: '', next: '', confirm: '' })
+  const [showCurrent, setShowCurrent] = useState(false)
+  const [showNext, setShowNext] = useState(false)
+  const [isSavingPw, setIsSavingPw] = useState(false)
+
+  const handleSavePassword = async () => {
+    if (!pwForm.current || !pwForm.next || !pwForm.confirm) {
+      toast.error('All password fields are required.')
+      return
+    }
+    if (pwForm.next.length < 8) {
+      toast.error('New password must be at least 8 characters.')
+      return
+    }
+    if (pwForm.next !== pwForm.confirm) {
+      toast.error('New passwords do not match.')
+      return
+    }
+    setIsSavingPw(true)
+    try {
+      await api.auth.updatePassword(pwForm.current, pwForm.next)
+      setPwForm({ current: '', next: '', confirm: '' })
+      toast.success('Password changed successfully.')
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Password change failed.')
+    } finally {
+      setIsSavingPw(false)
+    }
+  }
+
   const today = new Date().toISOString().slice(0, 10)
 
   return (
     <div className="flex flex-col flex-1 min-h-0">
-      <AdminNavbar title="Settings" subtitle="Manage exam schedule and availability" />
+      <AdminNavbar title="Settings" subtitle="Manage exam schedule and account settings" />
 
       <div className="flex-1 overflow-auto p-4 sm:p-6 space-y-6">
+
+        {/* ── Exam Dates ── */}
         <Card>
           <CardHeader>
             <CardTitle className="flex items-center gap-2 text-base">
@@ -50,7 +110,6 @@ export default function SettingsPage() {
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
-            {/* Add new date */}
             <div className="flex gap-2 items-end">
               <div className="space-y-1.5 flex-1">
                 <Label htmlFor="new-date">Add Exam Date</Label>
@@ -68,7 +127,6 @@ export default function SettingsPage() {
               </Button>
             </div>
 
-            {/* Existing dates */}
             <div className="space-y-2">
               <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">
                 Current Exam Dates ({examDates?.length ?? 0})
@@ -104,6 +162,121 @@ export default function SettingsPage() {
             </div>
           </CardContent>
         </Card>
+
+        {/* ── Display Name ── */}
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2 text-base">
+              <User className="h-4 w-4 text-primary" />
+              Display Name
+            </CardTitle>
+            <CardDescription>
+              Update the name shown throughout the admin panel.
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <div className="space-y-1.5">
+              <Label htmlFor="display-name">Full Name</Label>
+              <Input
+                id="display-name"
+                value={displayName}
+                onChange={e => setDisplayName(e.target.value)}
+                disabled={isSavingProfile}
+              />
+            </div>
+            <div className="flex items-center gap-3">
+              <Button
+                onClick={handleSaveProfile}
+                disabled={isSavingProfile || displayName.trim() === (profile?.full_name ?? '')}
+              >
+                {isSavingProfile ? 'Saving…' : 'Save Name'}
+              </Button>
+              <p className="text-xs text-muted-foreground">
+                Logged in as <span className="font-medium text-foreground">{profile?.email}</span>
+              </p>
+            </div>
+          </CardContent>
+        </Card>
+
+        {/* ── Change Password ── */}
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2 text-base">
+              <Lock className="h-4 w-4 text-primary" />
+              Change Password
+            </CardTitle>
+            <CardDescription>
+              Enter your current password then choose a new one (min. 8 characters).
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <div className="space-y-1.5">
+              <Label htmlFor="pw-current">Current Password</Label>
+              <div className="relative">
+                <Input
+                  id="pw-current"
+                  type={showCurrent ? 'text' : 'password'}
+                  value={pwForm.current}
+                  onChange={e => setPwForm(f => ({ ...f, current: e.target.value }))}
+                  className="pr-9"
+                  disabled={isSavingPw}
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowCurrent(v => !v)}
+                  className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+                  tabIndex={-1}
+                >
+                  {showCurrent ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                </button>
+              </div>
+            </div>
+
+            <div className="space-y-1.5">
+              <Label htmlFor="pw-new">New Password</Label>
+              <div className="relative">
+                <Input
+                  id="pw-new"
+                  type={showNext ? 'text' : 'password'}
+                  value={pwForm.next}
+                  onChange={e => setPwForm(f => ({ ...f, next: e.target.value }))}
+                  className="pr-9"
+                  disabled={isSavingPw}
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowNext(v => !v)}
+                  className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+                  tabIndex={-1}
+                >
+                  {showNext ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                </button>
+              </div>
+            </div>
+
+            <div className="space-y-1.5">
+              <Label htmlFor="pw-confirm">Confirm New Password</Label>
+              <Input
+                id="pw-confirm"
+                type="password"
+                value={pwForm.confirm}
+                onChange={e => setPwForm(f => ({ ...f, confirm: e.target.value }))}
+                disabled={isSavingPw}
+              />
+              {pwForm.confirm && pwForm.next !== pwForm.confirm && (
+                <p className="text-xs text-destructive">Passwords do not match.</p>
+              )}
+            </div>
+
+            <Button
+              onClick={handleSavePassword}
+              disabled={isSavingPw || !pwForm.current || !pwForm.next || !pwForm.confirm}
+            >
+              {isSavingPw ? 'Saving…' : 'Change Password'}
+            </Button>
+          </CardContent>
+        </Card>
+
       </div>
 
       <AlertDialog open={!!removingDate} onOpenChange={open => { if (!open) setRemovingDate(null) }}>

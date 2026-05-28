@@ -52,6 +52,32 @@ app.get('/api/auth/me', requireAuth, async (req, res) => {
   res.json(rows[0])
 })
 
+// ─── PATCH /api/auth/profile ──────────────────────────────────────────────────
+app.patch('/api/auth/profile', requireAuth, async (req, res) => {
+  const { full_name } = req.body
+  if (!full_name?.trim()) return res.status(400).json({ error: 'full_name is required' })
+  await db.query('UPDATE admin_profiles SET full_name=? WHERE id=?', [full_name.trim(), req.admin.id])
+  const [[row]] = await db.query('SELECT id,full_name,email,role,created_at FROM admin_profiles WHERE id=?', [req.admin.id])
+  res.json(row)
+})
+
+// ─── PATCH /api/auth/password ─────────────────────────────────────────────────
+app.patch('/api/auth/password', requireAuth, async (req, res) => {
+  const { current_password, new_password } = req.body
+  if (!current_password || !new_password)
+    return res.status(400).json({ error: 'current_password and new_password are required' })
+  if (new_password.length < 8)
+    return res.status(400).json({ error: 'New password must be at least 8 characters.' })
+
+  const [[admin]] = await db.query('SELECT password FROM admin_profiles WHERE id=?', [req.admin.id])
+  const valid = await bcrypt.compare(current_password, admin.password)
+  if (!valid) return res.status(401).json({ error: 'Current password is incorrect.' })
+
+  const hashed = await bcrypt.hash(new_password, 12)
+  await db.query('UPDATE admin_profiles SET password=? WHERE id=?', [hashed, req.admin.id])
+  res.json({ success: true })
+})
+
 // ─── GET /api/slots/:date ─────────────────────────────────────────────────────
 app.get('/api/slots/:date', async (req, res) => {
   const { date } = req.params

@@ -46,6 +46,12 @@ export const api = {
     async me() {
       return request<AdminProfileRow>('GET', '/auth/me', undefined, true)
     },
+    async updateProfile(full_name: string) {
+      return request<AdminProfileRow>('PATCH', '/auth/profile', { full_name }, true)
+    },
+    async updatePassword(current_password: string, new_password: string) {
+      return request<{ success: boolean }>('PATCH', '/auth/password', { current_password, new_password }, true)
+    },
   },
 
   // ─── Slots ──────────────────────────────────────────────────────────────────
