@@ -154,6 +154,13 @@ export const api = {
       return request<DashboardStats>('GET', `/dashboard/stats/${date}`, undefined, true)
     },
   },
+
+  // ─── Cloud Sync ───────────────────────────────────────────────────────────────
+  sync: {
+    async push() {
+      return request<SyncResult>('POST', '/sync', undefined, true)
+    },
+  },
 }
 
 // ─── Row types ────────────────────────────────────────────────────────────────
@@ -231,6 +238,13 @@ export interface DashboardStats {
   rejected: number
   cancelled: number
   avg_score: number | null
+}
+
+export interface SyncResult {
+  success: boolean
+  synced_at: string
+  results: { students: number; appointments: number; evaluations: number }
+  errors: { table: string; error: string }[]
 }
 
 export interface StudentAppointmentResult {

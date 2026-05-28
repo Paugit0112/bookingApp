@@ -1,11 +1,12 @@
 import { useState } from 'react'
-import { Trash2, Plus, CalendarDays, AlertCircle, User, Lock, Eye, EyeOff } from 'lucide-react'
+import { Trash2, Plus, CalendarDays, AlertCircle, User, Lock, Eye, EyeOff, CloudUpload, RefreshCw, CheckCircle2, XCircle } from 'lucide-react'
 import { toast } from 'sonner'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Skeleton } from '@/components/ui/skeleton'
+import { Separator } from '@/components/ui/separator'
 import {
   AlertDialog, AlertDialogAction, AlertDialogCancel,
   AlertDialogContent, AlertDialogDescription, AlertDialogFooter,
@@ -15,12 +16,20 @@ import { AdminNavbar } from '@/components/shared/Adminnavbar'
 import { useExamDates, useAddExamDate, useRemoveExamDate } from '@/hooks/useExamDates'
 import { useAuthStore } from '@/stores/authStore'
 import { api } from '@/lib/api'
+import type { SyncResult } from '@/lib/api'
 import { formatDate } from '@/lib/utils'
+
+function loadLastSync(): SyncResult | null {
+  try {
+    const s = localStorage.getItem('evalbook_last_sync')
+    return s ? JSON.parse(s) : null
+  } catch { return null }
+}
 
 export default function SettingsPage() {
   const { profile, setProfile } = useAuthStore()
 
-  // ── Exam dates state ──────────────────────────────────────────────────────
+  // ── Exam dates ────────────────────────────────────────────────────────────
   const [newDate, setNewDate] = useState('')
   const [removingDate, setRemovingDate] = useState<string | null>(null)
 
@@ -38,15 +47,12 @@ export default function SettingsPage() {
     removeDate(removingDate, { onSettled: () => setRemovingDate(null) })
   }
 
-  // ── Profile (display name) state ──────────────────────────────────────────
+  // ── Display name ──────────────────────────────────────────────────────────
   const [displayName, setDisplayName] = useState(profile?.full_name ?? '')
   const [isSavingProfile, setIsSavingProfile] = useState(false)
 
   const handleSaveProfile = async () => {
-    if (!displayName.trim()) {
-      toast.error('Display name cannot be empty.')
-      return
-    }
+    if (!displayName.trim()) { toast.error('Display name cannot be empty.'); return }
     setIsSavingProfile(true)
     try {
       const updated = await api.auth.updateProfile(displayName.trim())
@@ -59,25 +65,16 @@ export default function SettingsPage() {
     }
   }
 
-  // ── Password state ────────────────────────────────────────────────────────
+  // ── Password ──────────────────────────────────────────────────────────────
   const [pwForm, setPwForm] = useState({ current: '', next: '', confirm: '' })
   const [showCurrent, setShowCurrent] = useState(false)
   const [showNext, setShowNext] = useState(false)
   const [isSavingPw, setIsSavingPw] = useState(false)
 
   const handleSavePassword = async () => {
-    if (!pwForm.current || !pwForm.next || !pwForm.confirm) {
-      toast.error('All password fields are required.')
-      return
-    }
-    if (pwForm.next.length < 8) {
-      toast.error('New password must be at least 8 characters.')
-      return
-    }
-    if (pwForm.next !== pwForm.confirm) {
-      toast.error('New passwords do not match.')
-      return
-    }
+    if (!pwForm.current || !pwForm.next || !pwForm.confirm) { toast.error('All password fields are required.'); return }
+    if (pwForm.next.length < 8) { toast.error('New password must be at least 8 characters.'); return }
+    if (pwForm.next !== pwForm.confirm) { toast.error('New passwords do not match.'); return }
     setIsSavingPw(true)
     try {
       await api.auth.updatePassword(pwForm.current, pwForm.next)
@@ -90,6 +87,33 @@ export default function SettingsPage() {
     }
   }
 
+  // ── Cloud sync ────────────────────────────────────────────────────────────
+  const [isSyncing, setIsSyncing] = useState(false)
+  const [syncError, setSyncError] = useState<string | null>(null)
+  const [lastSync, setLastSync] = useState<SyncResult | null>(loadLastSync)
+
+  const handleSync = async () => {
+    setIsSyncing(true)
+    setSyncError(null)
+    try {
+      const result = await api.sync.push()
+      setLastSync(result)
+      localStorage.setItem('evalbook_last_sync', JSON.stringify(result))
+      const total = result.results.students + result.results.appointments + result.results.evaluations
+      if (result.success) {
+        toast.success(`Sync complete — ${total} records pushed to Supabase.`)
+      } else {
+        toast.warning(`Sync finished with ${result.errors.length} error(s). Check details below.`)
+      }
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Sync failed.'
+      setSyncError(msg)
+      toast.error(msg)
+    } finally {
+      setIsSyncing(false)
+    }
+  }
+
   const today = new Date().toISOString().slice(0, 10)
 
   return (
@@ -97,6 +121,86 @@ export default function SettingsPage() {
       <AdminNavbar title="Settings" subtitle="Manage exam schedule and account settings" />
 
       <div className="flex-1 overflow-auto p-4 sm:p-6 space-y-6">
+
+        {/* ── Cloud Sync ── */}
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2 text-base">
+              <CloudUpload className="h-4 w-4 text-primary" />
+              Cloud Sync
+            </CardTitle>
+            <CardDescription>
+              Push all local records to Supabase. Run this after working offline to sync students,
+              appointments, and evaluations to the cloud.
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-4">
+
+            {/* Last sync summary */}
+            {lastSync && (
+              <div className="rounded-lg border bg-muted/30 p-4 space-y-3">
+                <div className="flex items-center justify-between">
+                  <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Last Sync</p>
+                  <div className="flex items-center gap-1.5 text-xs">
+                    {lastSync.success
+                      ? <><CheckCircle2 className="h-3.5 w-3.5 text-green-500" /><span className="text-green-600 dark:text-green-400">Success</span></>
+                      : <><XCircle className="h-3.5 w-3.5 text-destructive" /><span className="text-destructive">Had errors</span></>
+                    }
+                  </div>
+                </div>
+                <p className="text-xs text-muted-foreground">
+                  {new Date(lastSync.synced_at).toLocaleString()}
+                </p>
+                <div className="grid grid-cols-3 gap-2 text-center text-xs">
+                  {([
+                    ['Students',     lastSync.results.students],
+                    ['Appointments', lastSync.results.appointments],
+                    ['Evaluations',  lastSync.results.evaluations],
+                  ] as const).map(([label, count]) => (
+                    <div key={label} className="rounded-md bg-muted px-2 py-1.5">
+                      <p className="font-bold text-sm">{count}</p>
+                      <p className="text-muted-foreground">{label}</p>
+                    </div>
+                  ))}
+                </div>
+                {lastSync.errors.length > 0 && (
+                  <div className="space-y-1">
+                    <Separator />
+                    {lastSync.errors.map((e, i) => (
+                      <p key={i} className="text-xs text-destructive">
+                        <span className="font-medium">{e.table}:</span> {e.error}
+                      </p>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* Runtime error */}
+            {syncError && (
+              <div className="flex items-start gap-2 rounded-lg border border-destructive/40 bg-destructive/5 p-3 text-sm text-destructive">
+                <AlertCircle className="h-4 w-4 mt-0.5 shrink-0" />
+                <span>{syncError}</span>
+              </div>
+            )}
+
+            <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+              <Button
+                onClick={handleSync}
+                disabled={isSyncing}
+                className="gap-2 sm:w-auto"
+              >
+                {isSyncing
+                  ? <><RefreshCw className="h-4 w-4 animate-spin" />Syncing…</>
+                  : <><CloudUpload className="h-4 w-4" />Sync to Cloud</>
+                }
+              </Button>
+              <p className="text-xs text-muted-foreground">
+                Requires <code className="rounded bg-muted px-1 py-0.5 font-mono text-xs">SUPABASE_SERVICE_KEY</code> in <code className="rounded bg-muted px-1 py-0.5 font-mono text-xs">.env</code>
+              </p>
+            </div>
+          </CardContent>
+        </Card>
 
         {/* ── Exam Dates ── */}
         <Card>

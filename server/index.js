@@ -1,4 +1,4 @@
-require('dotenv').config()
+require('dotenv').config({ path: require('path').join(__dirname, '../.env') })
 const express = require('express')
 const cors    = require('cors')
 const jwt     = require('jsonwebtoken')
@@ -541,6 +541,75 @@ app.get('/api/appointments/:id', requireAuth, async (req, res) => {
     ...r,
     students: { id: r.s_id, full_name: r.full_name, student_id: r.s_student_id, section: r.section, created_at: r.s_created_at },
   })
+})
+
+// ─── POST /api/sync ───────────────────────────────────────────────────────────
+app.post('/api/sync', requireAuth, async (req, res) => {
+  const SB_URL = process.env.SUPABASE_URL
+  const SB_KEY = process.env.SUPABASE_SERVICE_KEY
+
+  if (!SB_URL || !SB_KEY || SB_KEY === 'your-service-role-key-here')
+    return res.status(503).json({ error: 'Supabase not configured. Set SUPABASE_URL and SUPABASE_SERVICE_KEY in .env' })
+
+  // Column sets that need special serialization
+  const DATE_COLS = new Set(['appointment_date', 'exam_date'])
+  const TIME_COLS = new Set(['appointment_time'])
+  const SKIP_COLS = new Set(['total_score']) // GENERATED column in Supabase — cannot be inserted
+
+  function serialize(row) {
+    const obj = {}
+    for (const [k, v] of Object.entries(row)) {
+      if (SKIP_COLS.has(k)) continue
+      if (TIME_COLS.has(k))       obj[k] = v != null ? String(v).slice(0, 8) : null
+      else if (DATE_COLS.has(k))  obj[k] = v instanceof Date ? v.toISOString().slice(0, 10) : String(v).slice(0, 10)
+      else if (v instanceof Date) obj[k] = v.toISOString()
+      else if (Buffer.isBuffer(v)) obj[k] = v.toString()
+      else                         obj[k] = v
+    }
+    return obj
+  }
+
+  async function upsert(table, rows) {
+    if (!rows.length) return { count: 0, error: null }
+    const CHUNK = 100
+    for (let i = 0; i < rows.length; i += CHUNK) {
+      const r = await fetch(`${SB_URL}/rest/v1/${table}`, {
+        method: 'POST',
+        headers: {
+          apikey: SB_KEY,
+          Authorization: `Bearer ${SB_KEY}`,
+          'Content-Type': 'application/json',
+          Prefer: 'resolution=merge-duplicates',
+        },
+        body: JSON.stringify(rows.slice(i, i + CHUNK)),
+      })
+      if (!r.ok) return { count: i, error: await r.text() }
+    }
+    return { count: rows.length, error: null }
+  }
+
+  const results = { students: 0, appointments: 0, evaluations: 0 }
+  const errors = []
+
+  try {
+    const [students]    = await db.query('SELECT * FROM students')
+    const [appointments] = await db.query('SELECT * FROM appointments')
+    const [evaluations] = await db.query('SELECT * FROM evaluations')
+
+    for (const [table, rows] of [
+      ['students',    students],
+      ['appointments', appointments],
+      ['evaluations', evaluations],
+    ]) {
+      const { count, error } = await upsert(table, rows.map(serialize))
+      results[table] = count
+      if (error) errors.push({ table, error })
+    }
+
+    res.json({ success: errors.length === 0, synced_at: new Date().toISOString(), results, errors })
+  } catch (err) {
+    res.status(500).json({ error: err.message })
+  }
 })
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
